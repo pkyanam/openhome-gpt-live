@@ -28,6 +28,20 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertIsNone(live.decode_realtime_event("not-json"))
         self.assertIsNone(live.decode_realtime_event({"missing": "type"}))
 
+    def test_completed_assistant_turn_is_a_hard_wake_boundary(self):
+        self.assertTrue(live._is_completed_assistant_turn({
+            "type": "turn.done",
+            "turn": {"role": "assistant", "transcript": "Done."},
+        }))
+        self.assertFalse(live._is_completed_assistant_turn({
+            "type": "turn.done",
+            "turn": {"role": "user", "transcript": "Juniper"},
+        }))
+        self.assertFalse(live._is_completed_assistant_turn({
+            "type": "state_update",
+            "payload": {"new_state": "listening"},
+        }))
+
     def test_selects_an_entitled_model(self):
         self.assertEqual(live._choose_model(["one", "two"], "two"), "two")
         self.assertEqual(live._choose_model(["one", "two"], "missing"), "one")

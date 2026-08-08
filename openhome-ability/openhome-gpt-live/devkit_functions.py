@@ -424,6 +424,14 @@ async def _run_live_session(client, config, model, stop_event):
                         playback_control,
                         wake_word=wake_interrupt,
                     )
+                    if wake_interrupt:
+                        wake_state["last_activity"] = now
+                        session_id = live_session_id_holder["value"]
+                        if session_id:
+                            # The next spoken request may be a clock question.
+                            # Refresh after cutting playback but before its
+                            # content reaches the remote model.
+                            await _refresh_clock_context(client, config, session_id)
             frame = AudioFrame(format="s16", layout="mono", samples=AUDIO_SAMPLES)
             frame.planes[0].update(data)
             frame.sample_rate = AUDIO_RATE
@@ -496,6 +504,17 @@ async def _run_live_session(client, config, model, stop_event):
                     )
                 else:
                     _write_armed_status(config, model, wake_state["phrase"])
+        elif _is_completed_assistant_turn(event):
+            # State transitions are not guaranteed for speech appended by the
+            # Mac bridge. The transcript's completed assistant turn is the
+            # authoritative per-request boundary, so require Juniper again even
+            # when Live never emits speaking -> listening.
+            wake_state["active"] = False
+            playback_control["barge_in"] = False
+            input_track._pending.clear()
+            input_track._preroll.clear()
+            input_track._wake_detector.reset()
+            _write_armed_status(config, model, wake_state["phrase"])
         elif event.get("type") in ("goodbye", "close_ready"):
             connection_closed.set()
 
@@ -671,6 +690,13 @@ def decode_realtime_event(message):
             continue
         break
     return value if isinstance(value, dict) and isinstance(value.get("type"), str) else None
+
+
+def _is_completed_assistant_turn(event):
+    if not isinstance(event, dict) or event.get("type") != "turn.done":
+        return False
+    turn = event.get("turn")
+    return isinstance(turn, dict) and turn.get("role") == "assistant"
 
 
 async def _wait_for_ice_gathering(pc):

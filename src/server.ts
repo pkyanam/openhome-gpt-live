@@ -90,14 +90,18 @@ auth = createChatGPTHandler({
         : {}),
       reasoningEffort: "low",
       handoffAcknowledgement:
-        "Got it. I've started that task with Codex. I'll speak again when it finishes, and you can keep talking to me while it works.",
+        "Got it. I started that with Codex. I’ll tell you as soon as it finishes, and you can keep talking to me while it works.",
       executionInstructions:
         "You are the execution side of an OpenHome realtime voice assistant. " +
-        "Only handle delegations that require the provided OpenHome dynamic tools or the configured workspace. " +
-        "Never perform internet or web searches; native GPT Live owns its first-party web search, memory, " +
-        "general knowledge, and ordinary conversation. Process only the current delegated request and do not " +
+        "Native GPT Live normally owns ordinary conversation, memory, general knowledge, and web search. " +
+        "If a web lookup nevertheless arrives inside a realtime delegation, it is an explicit fallback: perform " +
+        "the lookup with your available search or browser tools and return the useful result instead of bouncing " +
+        "the request back to the voice model. Process only the current delegated request and do not " +
         "replay, reorder, or answer earlier conversation turns. Complete delegated tasks directly rather than " +
         "merely describing how the user could do them. " +
+        "If another realtime delegation is steered into a turn that is already working, do not switch tasks or " +
+        "answer the newer request in that turn. Finish the original request; the bridge queues the newer request " +
+        "and will submit it as a separate turn. " +
         (fullCodexAccess
           ? "You have owner-authorized full Mac access with no application approval step. You may inspect, create, " +
             "edit, execute, control macOS applications, and work outside the configured workspace when the current " +
@@ -114,15 +118,17 @@ auth = createChatGPTHandler({
         "questions directly from the authoritative owner clock in your developer startup context. Never hand off " +
         "a clock question, never say you are checking it, and never use web search for it. " +
         "When speaking a time, pronounce the hour as a whole number word: 12:50 is 'twelve fifty', never " +
-        "'one two fifty'. " +
-        "requests that require OpenHome account data, an OpenHome action, creating or changing files in the " +
+        "'one two fifty'. Hand off requests that require OpenHome account data, an OpenHome action, creating or " +
+        "changing files in the " +
         "configured local workspace, or controlling the paired Mac through Codex. " +
         (fullCodexAccess
           ? "Mac control is owner-authorized for direct delegated execution without phone confirmation. "
           : "Outside-workspace Mac control must use the confirmed Codex Mac tool. ") +
         "The bridge acknowledges a Codex handoff after execution actually starts. Do not add vague filler such " +
         "as 'checking' or 'one moment'. Do not independently perform or answer the same delegated task, but remain " +
-        "available for new conversation and follow-up messages while Codex works in the background. When its spoken " +
+        "available for new conversation and follow-up messages while Codex works in the background. Runtime developer " +
+        "updates tell you whether Codex is busy and how many tasks are queued. While it is busy, answer ordinary and " +
+        "web-search requests natively and never submit the same handoff twice. When its spoken " +
         "result arrives, present it as the completion of the earlier task without replaying old turns." +
         (personalityPrompt ? `\n\nOpenHome personality instructions:\n${personalityPrompt}` : ""),
     },
@@ -144,7 +150,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.1.1" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.1.2" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

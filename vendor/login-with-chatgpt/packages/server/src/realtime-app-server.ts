@@ -39,6 +39,16 @@ export type RealtimeBridgeEvent =
   | { type: "session.started" }
   | { type: "session.closed" }
   | { type: "handoff"; transcript: string }
+  | { type: "handoff.started"; taskId: string; transcript: string; queued: boolean }
+  | { type: "handoff.queued"; taskId: string; transcript: string; position: number }
+  | { type: "handoff.deduplicated"; transcript: string }
+  | {
+    type: "handoff.completed";
+    taskId: string;
+    transcript: string;
+    status: "completed" | "failed" | "interrupted";
+    fallbackSpeech: boolean;
+  }
   | { type: "tool.running"; callId: string; name: string }
   | { type: "tool.completed"; callId: string; name: string }
   | { type: "tool.pending_confirmation"; callId: string; name: string; review: unknown }
@@ -66,6 +76,8 @@ export interface ChatGPTRealtimeAppServerOptions {
   cwd?: string;
   /** Defaults to read-only. Use workspace-write only for an explicitly scoped cwd. */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  /** Injectable owner clock for deterministic integrations and tests. */
+  now?: () => number;
 }
 
 export interface StartRealtimeAppServerOptions {
@@ -92,7 +104,20 @@ interface PendingConfirmation {
   result: RealtimeToolResult;
 }
 
+interface DelegatedTask {
+  id: string;
+  transcript: string;
+  normalizedTranscript: string;
+  context?: string;
+  queued: boolean;
+  turnId?: string;
+  spoke: boolean;
+  contaminated: boolean;
+}
+
 const SPEAK_TOOL = "speak_to_user";
+const MAX_QUEUED_HANDOFFS = 5;
+const HANDOFF_DEDUPE_MS = 30_000;
 const DEFAULT_EXECUTION_INSTRUCTIONS =
   "You are the execution side of one native realtime voice assistant. Requests arrive inside " +
   "<realtime_delegation>. Use dynamic tools whenever private data or an external action is needed. " +
@@ -134,6 +159,10 @@ export class ChatGPTRealtimeAppServerSession {
   }>>();
   private confirmations = new Map<string, PendingConfirmation>();
   private allowedTools: Set<string>;
+  private activeTask?: DelegatedTask;
+  private queuedTasks: DelegatedTask[] = [];
+  private recentHandoffs = new Map<string, number>();
+  private speechTail: Promise<void> = Promise.resolve();
 
   constructor(options: ChatGPTRealtimeAppServerOptions) {
     if (!options.tokens.accessToken || !options.tokens.accountId) {
@@ -220,7 +249,7 @@ export class ChatGPTRealtimeAppServerSession {
           includeStartupContext: true,
           initialItems: [{
             role: "developer",
-            text: realtimeClockContext(options),
+            text: realtimeClockContext(options, new Date(this.nowMs())),
           }],
           prompt: this.options.realtimePrompt ?? DEFAULT_REALTIME_PROMPT,
           transport: { type: "webrtc", sdp: options.sdp },
@@ -288,11 +317,16 @@ export class ChatGPTRealtimeAppServerSession {
   }
 
   async speak(text: string): Promise<void> {
-    if (!this.threadId || !text.trim()) return;
-    await this.expectResult("thread/realtime/appendSpeech", {
-      threadId: this.threadId,
-      text: text.trim(),
+    const speech = text.trim();
+    if (!this.threadId || !speech) return;
+    const operation = this.speechTail.catch(() => {}).then(async () => {
+      await this.expectResult("thread/realtime/appendSpeech", {
+        threadId: this.threadId,
+        text: speech,
+      });
     });
+    this.speechTail = operation.catch(() => {});
+    await operation;
   }
 
   /** Refresh the native model's authoritative clock without starting a Codex handoff. */
@@ -301,7 +335,7 @@ export class ChatGPTRealtimeAppServerSession {
     await this.expectResult("thread/realtime/appendText", {
       threadId: this.threadId,
       role: "developer",
-      text: realtimeClockContext(this.startOptions),
+      text: realtimeClockContext(this.startOptions, new Date(this.nowMs())),
     });
   }
 
@@ -410,6 +444,13 @@ export class ChatGPTRealtimeAppServerSession {
         });
         return;
       }
+      if (method === "currentTime/read") {
+        if (typeof params["threadId"] !== "string" || params["threadId"] !== this.threadId) {
+          throw new Error("Current-time request does not belong to this realtime thread.");
+        }
+        this.send({ id, result: { currentTimeAt: Math.floor(this.nowMs() / 1_000) } });
+        return;
+      }
       if (method !== "item/tool/call") {
         this.send({ id, error: { code: -32601, message: `Unsupported request: ${method}` } });
         return;
@@ -452,6 +493,21 @@ export class ChatGPTRealtimeAppServerSession {
     if (name === SPEAK_TOOL) {
       const text = args["text"];
       if (typeof text !== "string" || !text.trim()) throw new Error("speak_to_user requires text.");
+      const task = this.activeTask;
+      if (task?.spoke) {
+        this.send({ id, result: dynamicToolResponse({ status: "already_spoken" }) });
+        this.emit({ type: "tool.completed", callId, name });
+        return;
+      }
+      // Realtime currently steers a second handoff into an already-running
+      // Codex turn. Do not let the steered request replace the first task's
+      // completion speech. The bridge will run that queued request separately.
+      if (task?.contaminated) {
+        this.send({ id, result: dynamicToolResponse({ status: "deferred_to_task_queue" }) });
+        this.emit({ type: "tool.completed", callId, name });
+        return;
+      }
+      if (task) task.spoke = true;
       // Acknowledge the server-initiated tool call before sending another
       // client request to that same app-server process. Some app-server
       // versions serialize these messages; awaiting appendSpeech first makes
@@ -487,31 +543,176 @@ export class ChatGPTRealtimeAppServerSession {
     if (method === "thread/realtime/itemAdded") {
       const item = asRecord(params["item"]);
       if (item?.["type"] === "handoff_request") {
-        const transcript = typeof item["input_transcript"] === "string"
-          ? item["input_transcript"]
-          : typeof item["input"] === "string"
-            ? item["input"]
-            : "";
-        this.emit({
-          type: "handoff",
-          transcript,
-        });
-        const configured = this.options.handoffAcknowledgement;
-        const acknowledgement = typeof configured === "function"
-          ? configured(transcript)
-          : configured;
-        if (acknowledgement?.trim()) {
-          void this.speak(acknowledgement).catch(() => this.emit({
-            type: "error",
-            message: "Codex started, but its spoken acknowledgement failed.",
-          }));
-        }
+        this.handleHandoff(item);
       }
+    } else if (method === "turn/started") {
+      const turn = asRecord(params["turn"]);
+      if (this.activeTask && !this.activeTask.turnId && typeof turn?.["id"] === "string") {
+        this.activeTask.turnId = turn["id"];
+      }
+    } else if (method === "turn/completed") {
+      void this.handleTurnCompleted(params).catch(() => this.emit({
+        type: "error",
+        message: "Codex finished, but task completion handling failed.",
+      }));
     } else if (method === "thread/realtime/error") {
       this.emit({ type: "error", message: "The Realtime service reported an error." });
     } else if (method === "thread/realtime/closed") {
       void this.close().catch(() => this.emit({ type: "error", message: "Realtime cleanup failed." }));
     }
+  }
+
+  private handleHandoff(item: JsonObject): void {
+    const transcript = (typeof item["input_transcript"] === "string"
+      ? item["input_transcript"]
+      : typeof item["input"] === "string"
+        ? item["input"]
+        : "").trim();
+    if (!transcript) return;
+    const normalizedTranscript = normalizeTranscript(transcript);
+    const now = this.nowMs();
+    for (const [key, seenAt] of this.recentHandoffs) {
+      if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentHandoffs.delete(key);
+    }
+    if (
+      this.activeTask?.normalizedTranscript === normalizedTranscript
+      || this.queuedTasks.some((task) => task.normalizedTranscript === normalizedTranscript)
+      || this.recentHandoffs.has(normalizedTranscript)
+    ) {
+      this.emit({ type: "handoff.deduplicated", transcript });
+      return;
+    }
+    this.recentHandoffs.set(normalizedTranscript, now);
+    const task: DelegatedTask = {
+      id: crypto.randomUUID(),
+      transcript,
+      normalizedTranscript,
+      context: handoffContext(item),
+      queued: Boolean(this.activeTask),
+      spoke: false,
+      contaminated: false,
+    };
+    this.emit({ type: "handoff", transcript });
+
+    if (!this.activeTask) {
+      this.activeTask = task;
+      this.emit({ type: "handoff.started", taskId: task.id, transcript, queued: false });
+      this.acknowledgeHandoff(transcript);
+      this.publishTaskState();
+      return;
+    }
+
+    this.activeTask.contaminated = !this.activeTask.spoke;
+    if (this.queuedTasks.length >= MAX_QUEUED_HANDOFFS) {
+      void this.speak("Codex already has several tasks queued. Please try that request again after one finishes.")
+        .catch(() => this.emit({ type: "error", message: "The Codex queue-full notice could not be spoken." }));
+      return;
+    }
+    this.queuedTasks.push(task);
+    this.emit({
+      type: "handoff.queued",
+      taskId: task.id,
+      transcript,
+      position: this.queuedTasks.length,
+    });
+    void this.speak(
+      `Codex is still working on your earlier task. I queued this request in position ${this.queuedTasks.length}.`,
+    ).catch(() => this.emit({ type: "error", message: "The Codex queue acknowledgement could not be spoken." }));
+    this.publishTaskState();
+  }
+
+  private acknowledgeHandoff(transcript: string): void {
+    const configured = this.options.handoffAcknowledgement;
+    const acknowledgement = typeof configured === "function"
+      ? configured(transcript)
+      : configured;
+    if (!acknowledgement?.trim()) return;
+    void this.speak(acknowledgement).catch(() => this.emit({
+      type: "error",
+      message: "Codex started, but its spoken acknowledgement failed.",
+    }));
+  }
+
+  private async handleTurnCompleted(params: JsonObject): Promise<void> {
+    const task = this.activeTask;
+    if (!task) return;
+    const turn = asRecord(params["turn"]);
+    const turnId = typeof turn?.["id"] === "string" ? turn["id"] : undefined;
+    if (task.turnId && turnId && task.turnId !== turnId) return;
+    if (turnId) task.turnId = turnId;
+    const rawStatus = turn?.["status"];
+    const status = rawStatus === "failed" || rawStatus === "interrupted" ? rawStatus : "completed";
+    let fallbackSpeech = false;
+    if (!task.spoke) {
+      fallbackSpeech = true;
+      const result = status === "completed" && !task.contaminated
+        ? finalAgentSpeech(turn)
+        : undefined;
+      const speech = result ?? taskCompletionFallback(task.transcript, status);
+      try {
+        await this.speak(speech);
+      } catch {
+        this.emit({ type: "error", message: "Codex finished, but its completion notice could not be spoken." });
+      }
+    }
+    this.emit({
+      type: "handoff.completed",
+      taskId: task.id,
+      transcript: task.transcript,
+      status,
+      fallbackSpeech,
+    });
+    this.activeTask = undefined;
+    this.publishTaskState();
+    await this.startNextQueuedTask();
+  }
+
+  private async startNextQueuedTask(): Promise<void> {
+    if (this.activeTask || !this.threadId) return;
+    const task = this.queuedTasks.shift();
+    if (!task) return;
+    this.activeTask = task;
+    try {
+      const response = await this.expectResult("turn/start", {
+        threadId: this.threadId,
+        input: [{ type: "text", text: queuedDelegationPrompt(task) }],
+      });
+      const turn = asRecord(asRecord(response["result"])?.["turn"]);
+      if (typeof turn?.["id"] === "string") task.turnId = turn["id"];
+      this.emit({ type: "handoff.started", taskId: task.id, transcript: task.transcript, queued: true });
+      void this.speak("I’ve started your next queued Codex task.").catch(() => this.emit({
+        type: "error",
+        message: "The queued-task start notice could not be spoken.",
+      }));
+      this.publishTaskState();
+    } catch {
+      this.activeTask = undefined;
+      this.emit({
+        type: "handoff.completed",
+        taskId: task.id,
+        transcript: task.transcript,
+        status: "failed",
+        fallbackSpeech: true,
+      });
+      await this.speak("I couldn’t start the next queued Codex task.").catch(() => {});
+      await this.startNextQueuedTask();
+    }
+  }
+
+  private publishTaskState(): void {
+    if (!this.threadId) return;
+    const text = this.activeTask
+      ? `Runtime task state: Codex is BUSY with one delegated task; ${this.queuedTasks.length} additional task${this.queuedTasks.length === 1 ? " is" : "s are"} queued. While Codex is busy, use native GPT Live capabilities for ordinary answers and web searches. Do not hand the same request to Codex twice.`
+      : "Runtime task state: Codex is IDLE and no delegated tasks are queued.";
+    void this.expectResult("thread/realtime/appendText", {
+      threadId: this.threadId,
+      role: "developer",
+      text,
+    }, 5_000).catch(() => {});
+  }
+
+  private nowMs(): number {
+    return this.options.now?.() ?? Date.now();
   }
 
   private request(method: string, params: JsonObject, timeoutMs = 30_000): Promise<JsonObject> {
@@ -598,6 +799,83 @@ export class ChatGPTRealtimeAppServerSession {
       }
     }
   }
+}
+
+function normalizeTranscript(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function handoffContext(item: JsonObject): string | undefined {
+  const entries = Array.isArray(item["active_transcript"])
+    ? item["active_transcript"]
+    : Array.isArray(item["activeTranscript"])
+      ? item["activeTranscript"]
+      : [];
+  for (let index = entries.length - 2; index >= 0; index -= 1) {
+    const entry = asRecord(entries[index]);
+    const role = entry?.["role"];
+    const text = entry?.["text"];
+    if (role !== "assistant" || typeof text !== "string") continue;
+    const cleaned = text.trim();
+    if (!cleaned || /started that task with codex|codex is still working|queued this request/i.test(cleaned)) {
+      continue;
+    }
+    return cleaned.slice(0, 1_000);
+  }
+  return undefined;
+}
+
+function queuedDelegationPrompt(task: DelegatedTask): string {
+  const context = task.context
+    ? `\n  <immediate_context>${escapeXml(task.context)}</immediate_context>`
+    : "";
+  return (
+    `<realtime_delegation queued="true">\n  <input>${escapeXml(task.transcript)}</input>${context}\n` +
+    "</realtime_delegation>\n" +
+    "This is one isolated queued request. Complete only this request; do not replay or merge earlier voice turns."
+  );
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function finalAgentSpeech(turn: JsonObject | undefined): string | undefined {
+  const items = Array.isArray(turn?.["items"]) ? turn["items"] : [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = asRecord(items[index]);
+    if (item?.["type"] !== "agentMessage" || typeof item["text"] !== "string") continue;
+    const cleaned = item["text"]
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/[*_`#>]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleaned) return cleaned.slice(0, 500);
+  }
+  return undefined;
+}
+
+function taskCompletionFallback(
+  transcript: string,
+  status: "completed" | "failed" | "interrupted",
+): string {
+  if (status === "failed") return "That Codex task failed. Please ask me to retry it.";
+  if (status === "interrupted") return "That Codex task was interrupted before it finished.";
+  if (/\b(game|website|web page|html)\b/i.test(transcript)) {
+    return "Codex finished your earlier build task.";
+  }
+  if (/\b(file|folder|project|code|app)\b/i.test(transcript)) {
+    return "Codex finished your earlier workspace task.";
+  }
+  if (/\b(mac|volume|open|launch|computer)\b/i.test(transcript)) {
+    return "Codex finished your earlier Mac task.";
+  }
+  return "Codex finished your earlier task.";
 }
 
 const INHERITED_APP_SERVER_ENV = [

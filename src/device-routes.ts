@@ -297,6 +297,8 @@ async function updateDeviceFromAuthResponse(
     await registry.update(deviceId, (record) => {
       record.liveSessionId = sessionId;
       record.connectionState = "connecting";
+      record.codexState = "idle";
+      record.codexQueueDepth = 0;
       if (typeof session?.["model"] === "string") record.selectedModel = session["model"];
       if (typeof session?.["voice"] === "string") record.voice = session["voice"];
       record.pendingConfirmations = [];
@@ -306,6 +308,8 @@ async function updateDeviceFromAuthResponse(
     await registry.update(deviceId, (record) => {
       delete record.liveSessionId;
       record.connectionState = "closed";
+      record.codexState = "idle";
+      record.codexQueueDepth = 0;
       record.pendingConfirmations = [];
     });
   }

@@ -19,6 +19,10 @@ interface PairedSession {
   selectedModel?: string;
   voice?: string;
   connectionState?: string;
+  codexState?: "idle" | "working";
+  codexQueueDepth?: number;
+  lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
+  lastCodexTaskAt?: number;
   pendingConfirmations: PendingConfirmation[];
   lastError?: string;
   lastSeenAt: number;
@@ -186,6 +190,16 @@ export function PairingApp() {
                 <div><dt>Plan</dt><dd>{session.loginUser?.plan ?? "Account default"}</dd></div>
                 <div><dt>Model</dt><dd>{session.selectedModel ?? "Waiting for Live"}</dd></div>
                 <div><dt>Voice</dt><dd>{session.voice ?? "juniper"}</dd></div>
+                <div>
+                  <dt>Codex</dt>
+                  <dd>
+                    {session.codexState ?? "idle"}
+                    {(session.codexQueueDepth ?? 0) > 0 ? ` · ${session.codexQueueDepth} queued` : ""}
+                  </dd>
+                </div>
+                {session.lastCodexTaskStatus && (
+                  <div><dt>Last task</dt><dd>{session.lastCodexTaskStatus}</dd></div>
+                )}
               </dl>
             </section>
           )}

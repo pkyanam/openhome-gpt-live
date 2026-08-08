@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.2 - 2026-08-08
+
+- Track Codex handoffs as explicit running, queued, deduplicated, and completed
+  tasks instead of allowing overlapping voice requests to silently replace one
+  another.
+- Guarantee a spoken completion notice from app-server `turn/completed` even
+  when the execution agent omits `speak_to_user`.
+- Keep native GPT Live available while Codex works, and let Codex perform a web
+  search as a fallback if Live delegates one anyway.
+- Answer app-server clock reads from the live host clock and re-arm the DevKit
+  on every completed assistant turn, including bridge-appended speech.
+- Show Codex busy, queue, and last-task state on the paired-phone page without
+  persisting voice transcripts.
+- Upgrade an existing OpenHome Ability in place from the CLI while preserving
+  its id and linked Third Party Keys.
+
 ## 0.1.1 - 2026-08-08
 
 - Prevent non-interactive setup from consuming the remaining input of a

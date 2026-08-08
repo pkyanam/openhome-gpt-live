@@ -117,7 +117,7 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
 .authorization-actions { display: flex; flex-direction: column; justify-content: space-between; gap: 1rem; }
 .authorization-actions p { margin: 0; color: #adb3ad; line-height: 1.5; }
 .primary-link { display: block; padding: 0.8rem 1rem; border-radius: 0.7rem; background: #8ef5b6; color: #0d1711; font-weight: 800; text-align: center; text-decoration: none; }
-.session-facts { display: flex; gap: 1.5rem; margin: 0; }
+.session-facts { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 0; }
 .session-facts div { display: grid; gap: 0.25rem; }
 .session-facts dt { color: #7f877f; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; }
 .session-facts dd { margin: 0; }

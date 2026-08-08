@@ -54,6 +54,45 @@ describe("DeviceRegistry", () => {
     expect(record?.selectedModel).toBe("gpt-live-test");
     expect(record?.pendingConfirmations).toHaveLength(1);
   });
+
+  test("tracks Codex work and queue state without persisting voice transcripts", async () => {
+    const { registry, store } = await createRegistry();
+    const registration = await registry.register("DevKit");
+    await registry.observeBridgeEvent(registration.record.id, { type: "session.started" });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "handoff.started",
+      taskId: "task-1",
+      transcript: "private spoken request",
+      queued: false,
+    });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "handoff.queued",
+      taskId: "task-2",
+      transcript: "another private request",
+      position: 1,
+    });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "handoff.completed",
+      taskId: "task-1",
+      transcript: "private spoken request",
+      status: "completed",
+      fallbackSpeech: true,
+    });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "handoff.started",
+      taskId: "task-2",
+      transcript: "another private request",
+      queued: true,
+    });
+
+    const record = await store.get(registration.record.id);
+    expect(record).toMatchObject({
+      codexState: "working",
+      codexQueueDepth: 0,
+      lastCodexTaskStatus: "completed",
+    });
+    expect(JSON.stringify(record)).not.toContain("private spoken request");
+  });
 });
 
 async function createRegistry(): Promise<{
