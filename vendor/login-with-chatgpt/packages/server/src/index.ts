@@ -20,6 +20,7 @@ export {
   type ResponsesRateLimit,
   type RealtimeAppServerConfirmationContext,
   type RealtimeAppServerPolicy,
+  type RealtimeAppServerSearchContext,
   type RealtimeAppServerSessionHandle,
   type RealtimeAppServerToolContext,
   type RealtimeProxyPolicy,

@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  CHATGPT_REALTIME_VOICES,
+  type ChatGPTRealtimeVoice,
+} from "@opencoredev/loginwithchatgpt-core";
 
 interface PendingConfirmation {
   callId: string;
@@ -23,17 +27,23 @@ interface PairedSession {
   codexQueueDepth?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
+  lastVoiceRoute?: "native" | "openai_search" | "codex";
+  lastVoiceRouteAt?: number;
   pendingConfirmations: PendingConfirmation[];
   lastError?: string;
   lastSeenAt: number;
 }
 
 export function PairingApp() {
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => formatPairingCode(
+    new URLSearchParams(window.location.hash.slice(1)).get("pairing") ?? "",
+  ));
   const [session, setSession] = useState<PairedSession>();
+  const [voice, setVoice] = useState<ChatGPTRealtimeVoice>("vale");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/pairing/session", { credentials: "include" });
@@ -67,6 +77,10 @@ export function PairingApp() {
     if (session) window.scrollTo({ top: 0 });
   }, [session?.deviceId]);
 
+  useEffect(() => {
+    if (isRealtimeVoice(session?.voice)) setVoice(session.voice);
+  }, [session?.voice]);
+
   async function claim(event: FormEvent) {
     event.preventDefault();
     setSubmitting(true);
@@ -82,6 +96,35 @@ export function PairingApp() {
       if (!response.ok || !payload.session) throw new Error(payload.message ?? "Pairing failed.");
       setSession(payload.session);
       setCode("");
+      window.history.replaceState(null, "", "/setup");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function saveVoice() {
+    setSubmitting(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const response = await fetch("/api/pairing/voice", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ voice }),
+      });
+      const payload = await response.json() as {
+        session?: PairedSession;
+        reconnecting?: boolean;
+        message?: string;
+      };
+      if (!response.ok || !payload.session) throw new Error(payload.message ?? "Voice update failed.");
+      setSession(payload.session);
+      setNotice(payload.reconnecting
+        ? `${voiceLabel(voice)} saved. GPT Live is reconnecting; give the speaker about ten seconds.`
+        : `${voiceLabel(voice)} saved. It will be used when GPT Live next connects.`);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -124,12 +167,13 @@ export function PairingApp() {
       </header>
 
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {notice && <div className="notice-banner" role="status">{notice}</div>}
 
       {!session ? (
         <section className="pairing-card">
           <div className="section-heading">
             <p className="eyebrow">ONE-TIME PAIRING</p>
-            <h2>Enter the eight digits spoken by OpenHome.</h2>
+            <h2>Enter the eight digits from the setup command or speaker.</h2>
           </div>
           <form className="pairing-form" onSubmit={claim}>
             <input
@@ -157,6 +201,35 @@ export function PairingApp() {
             </div>
             <div className={`connection-pill connection-${session.connectionState ?? session.loginStatus}`}>
               {session.connectionState ?? session.loginStatus}
+            </div>
+          </section>
+
+          <section className="pairing-card voice-settings-card">
+            <div>
+              <p className="eyebrow">GPT LIVE VOICE</p>
+              <h2>Choose how the speaker sounds.</h2>
+              <p>Changing this restarts only the Live connection. The wake phrase remains “Juniper.”</p>
+            </div>
+            <div className="voice-picker">
+              <label>
+                <span>Voice</span>
+                <select value={voice} onChange={(event) => setVoice(event.target.value as ChatGPTRealtimeVoice)}>
+                  {CHATGPT_REALTIME_VOICES.map((entry) => (
+                    <option value={entry} key={entry}>{voiceLabel(entry)}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={submitting || voice === session.voice || session.codexState === "working"}
+                onClick={() => void saveVoice()}
+              >
+                {submitting ? "Saving…" : "Save voice"}
+              </button>
+              {session.codexState === "working" && (
+                <small>Wait for the active Codex task before restarting Live.</small>
+              )}
             </div>
           </section>
 
@@ -189,7 +262,7 @@ export function PairingApp() {
               <dl className="session-facts">
                 <div><dt>Plan</dt><dd>{session.loginUser?.plan ?? "Account default"}</dd></div>
                 <div><dt>Model</dt><dd>{session.selectedModel ?? "Waiting for Live"}</dd></div>
-                <div><dt>Voice</dt><dd>{session.voice ?? "juniper"}</dd></div>
+                <div><dt>Voice</dt><dd>{voiceLabel(session.voice ?? "vale")}</dd></div>
                 <div>
                   <dt>Codex</dt>
                   <dd>
@@ -199,6 +272,16 @@ export function PairingApp() {
                 </div>
                 {session.lastCodexTaskStatus && (
                   <div><dt>Last task</dt><dd>{session.lastCodexTaskStatus}</dd></div>
+                )}
+                {session.lastVoiceRoute && (
+                  <div>
+                    <dt>Last routed request</dt>
+                    <dd>{session.lastVoiceRoute === "native"
+                      ? "GPT Live"
+                      : session.lastVoiceRoute === "openai_search"
+                        ? "OpenAI web search"
+                        : "Codex"}</dd>
+                  </div>
                 )}
               </dl>
             </section>
@@ -243,4 +326,13 @@ function formatPairingCode(value: string): string {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isRealtimeVoice(value: unknown): value is ChatGPTRealtimeVoice {
+  return typeof value === "string"
+    && (CHATGPT_REALTIME_VOICES as readonly string[]).includes(value);
+}
+
+function voiceLabel(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }

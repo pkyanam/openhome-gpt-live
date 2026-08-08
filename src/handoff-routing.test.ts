@@ -11,6 +11,16 @@ describe("realtime handoff routing", () => {
       .toBe("native");
     expect(routeRealtimeHandoff("Juniper, search the web for today's Open Home news"))
       .toBe("native");
+    expect(routeRealtimeHandoff("Juniper, explain photosynthesis in five sentences"))
+      .toBe("native");
+    expect(routeRealtimeHandoff("Juniper, what time is it?"))
+      .toBe("native");
+    expect(routeRealtimeHandoff("How do I create a file in a Python program?"))
+      .toBe("native");
+    expect(routeRealtimeHandoff("Native-only retry. Do not delegate to Codex: search the web for OpenHome news"))
+      .toBe("native");
+    expect(routeRealtimeHandoff("Don't use Codex; search the web for OpenHome news"))
+      .toBe("native");
   });
 
   test("keeps searches with side effects in Codex", () => {
@@ -24,6 +34,14 @@ describe("realtime handoff routing", () => {
     expect(routeRealtimeHandoff("Create a game in my workspace"))
       .toBe("codex");
     expect(routeRealtimeHandoff("Open Safari on my MacBook"))
+      .toBe("codex");
+    expect(routeRealtimeHandoff("List the directories in my workspace"))
+      .toBe("codex");
+    expect(routeRealtimeHandoff("Use Codex to calculate two plus two"))
+      .toBe("codex");
+    expect(routeRealtimeHandoff("Send an email message to my teammate"))
+      .toBe("codex");
+    expect(routeRealtimeHandoff("Tell me which abilities are installed on OpenHome"))
       .toBe("codex");
   });
 });

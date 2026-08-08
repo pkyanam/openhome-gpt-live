@@ -11,7 +11,9 @@ import { JsonFileStore } from "./file-store.ts";
 import { OpenHomeClient } from "./openhome-client.ts";
 import { createOpenHomeToolPolicy } from "./openhome-tools.ts";
 import { createCodexControlPolicy } from "./codex-control.ts";
-import { routeRealtimeHandoff } from "./handoff-routing.ts";
+import { parseOpenAISearchEvents } from "./openai-search.ts";
+import { routeVoiceRequest } from "./voice-routing.ts";
+import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
 
 const host = process.env.HOST?.trim() || "127.0.0.1";
 const port = parsePort(process.env.PORT);
@@ -32,6 +34,9 @@ const confirmedMacControl = codexMacControlMode === "confirmed";
 const fullCodexAccess = codexMacControlMode === "full";
 const loginSessionStore = new JsonFileStore<StoredSession>(join(dataDirectory, "login-sessions.json"));
 const deviceStore = new JsonFileStore<DeviceRecord>(join(dataDirectory, "device-sessions.json"));
+const pairingCodeStore = new PairingCodeStore(
+  new JsonFileStore<PairingCodeRecord>(join(dataDirectory, "pairing-codes.json")),
+);
 const openHome = new OpenHomeClient({
   apiKey: process.env.OPENHOME_API_KEY,
   baseUrl: process.env.OPENHOME_API_BASE,
@@ -60,7 +65,6 @@ if (isPubliclyReachable(host, publicBaseUrl) && !allowedChatGPTEmail) {
 }
 
 const deviceRegistry = new DeviceRegistry(deviceStore, lwcSecret);
-
 let auth: ChatGPTHandler;
 auth = createChatGPTHandler({
   secret: lwcSecret,
@@ -92,13 +96,15 @@ auth = createChatGPTHandler({
       reasoningEffort: "low",
       handoffAcknowledgement:
         "Got it. I started that with Codex. I’ll tell you as soon as it finishes, and you can keep talking to me while it works.",
-      routeHandoff: routeRealtimeHandoff,
+      searchAcknowledgement:
+        "I’m searching OpenAI now. You can keep talking while I check.",
+      executeSearch: ({ request, transcript }) => executeSubscriptionSearch(request, transcript),
+      routeHandoff: routeVoiceRequest,
       executionInstructions:
         "You are the execution side of an OpenHome realtime voice assistant. " +
-        "Native GPT Live normally owns ordinary conversation, memory, general knowledge, and web search. " +
-        "If a web lookup nevertheless arrives inside a realtime delegation, it is an explicit fallback: perform " +
-        "the lookup with your available search or browser tools and return the useful result instead of bouncing " +
-        "the request back to the voice model. Process only the current delegated request and do not " +
+        "Native GPT Live owns ordinary conversation, memory, and general knowledge. The OpenHome bridge intercepts " +
+        "web-search handoffs and runs them through OpenAI, so Codex should receive only local computer, workspace, " +
+        "and OpenHome action requests. Process only the current delegated request and do not " +
         "replay, reorder, or answer earlier conversation turns. Complete delegated tasks directly rather than " +
         "merely describing how the user could do them. " +
         "If another realtime delegation is steered into a turn that is already working, do not switch tasks or " +
@@ -115,8 +121,9 @@ auth = createChatGPTHandler({
         "After finishing, call speak_to_user exactly once with a concise spoken result.",
       realtimePrompt:
         "You are an OpenHome voice assistant. Keep responses concise, natural, and interruptible. " +
-        "Use GPT Live's native first-party capabilities directly for ordinary conversation, general knowledge, " +
-        "memory, current information, and all internet or web searches. Answer current date, day, time, and timezone " +
+        "Use GPT Live directly for ordinary conversation, general knowledge, and memory. For current information " +
+        "or internet/web searches, create a native backend handoff; the OpenHome bridge will run OpenAI's first-party " +
+        "web search and speak the result without starting Codex. Answer current date, day, time, and timezone " +
         "questions directly from the authoritative owner clock in your developer startup context. Never hand off " +
         "a clock question, never say you are checking it, and never use web search for it. " +
         "When speaking a time, pronounce the hour as a whole number word: 12:50 is 'twelve fifty', never " +
@@ -129,8 +136,9 @@ auth = createChatGPTHandler({
         "The bridge acknowledges a Codex handoff after execution actually starts. Do not add vague filler such " +
         "as 'checking' or 'one moment'. Do not independently perform or answer the same delegated task, but remain " +
         "available for new conversation and follow-up messages while Codex works in the background. Runtime developer " +
-        "updates tell you whether Codex is busy and how many tasks are queued. While it is busy, answer ordinary and " +
-        "web-search requests natively and never submit the same handoff twice. When its spoken " +
+        "updates tell you whether Codex is busy and how many tasks are queued. While it is busy, answer ordinary " +
+        "requests directly and send web-search requests through the backend handoff; never submit the same handoff " +
+        "twice. When its spoken " +
         "result arrives, present it as the completion of the earlier task without replaying old turns." +
         (personalityPrompt ? `\n\nOpenHome personality instructions:\n${personalityPrompt}` : ""),
     },
@@ -142,6 +150,7 @@ const deviceRoutes = createDeviceRoutes({
   registry: deviceRegistry,
   bootstrapToken,
   publicBaseUrl,
+  pairingCodes: pairingCodeStore,
 });
 
 const server = Bun.serve({
@@ -152,7 +161,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.1.2" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.2.0" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),
@@ -218,4 +227,41 @@ async function requireAuthorizedToolUser(request: Request): Promise<void> {
   if (session.status !== "authenticated" || actual !== allowedChatGPTEmail) {
     throw new Error("This ChatGPT account is not authorized to use the configured OpenHome tools.");
   }
+}
+
+async function executeSubscriptionSearch(request: Request, transcript: string): Promise<string> {
+  await requireAuthorizedToolUser(request);
+  const configured = process.env.LWC_SEARCH_MODEL?.trim()
+    || process.env.LWC_DEFAULT_MODEL?.trim()
+    || "gpt-5.5";
+  const model = configured.replace(/-wm$/, "");
+  const target = new URL(`${auth.basePath}/responses`, request.url);
+  const headers = new Headers();
+  const cookie = request.headers.get("cookie");
+  if (cookie) headers.set("cookie", cookie);
+  headers.set("content-type", "application/json");
+  headers.set("accept", "text/event-stream");
+  const response = await auth.handler(new Request(target, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model,
+      stream: true,
+      instructions:
+        "You are the web-search sidecar for an OpenHome GPT Live speaker. Always use the supplied web_search tool " +
+        "for this request. Return a concise, speech-friendly answer with the important current facts. Name one or " +
+        "two sources when useful, but do not read URLs aloud and do not use Markdown tables.",
+      input: [{
+        role: "user",
+        content: [{ type: "input_text", text: transcript }],
+      }],
+      tools: [{ type: "web_search" }],
+      tool_choice: "auto",
+    }),
+  }));
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI subscription search failed (${response.status}): ${body.slice(0, 500)}`);
+  }
+  return parseOpenAISearchEvents(body);
 }

@@ -46,6 +46,11 @@ AEC_CAPTURE_CHANNEL = 1
 AEC_SOURCE = "openhome_gpt_live_aec"
 AEC_SINK = "openhome_gpt_live_aec_sink"
 DEFAULT_WAKE_PHRASE = "juniper"
+DEFAULT_VOICE = "vale"
+SUPPORTED_VOICES = {
+    "arbor", "breeze", "cove", "ember", "juniper",
+    "maple", "sol", "spruce", "vale",
+}
 DEFAULT_ACTIVE_IDLE_SECONDS = 30
 WAKE_PREROLL_FRAMES = 25
 WAKE_KWS_THRESHOLD = 1e-25
@@ -56,7 +61,7 @@ def configure_and_start(
     server_url,
     bootstrap_token,
     preferred_model="",
-    voice="juniper",
+    voice=DEFAULT_VOICE,
     capture_device="default",
     playback_device="default",
     wake_phrase=DEFAULT_WAKE_PHRASE,
@@ -71,7 +76,8 @@ def configure_and_start(
         _require_audio_commands()
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         existing = _read_json(CONFIG_FILE, default={})
-        request_body = {"name": "OpenHome DevKit"}
+        requested_voice = _validate_voice(voice)
+        request_body = {"name": "OpenHome DevKit", "voice": requested_voice}
         if (
             existing.get("server_url") == server_url
             and existing.get("device_id")
@@ -90,17 +96,21 @@ def configure_and_start(
                     client,
                     server_url,
                     bootstrap_token,
-                    {"name": "OpenHome DevKit"},
+                    {"name": "OpenHome DevKit", "voice": requested_voice},
                 )
             response.raise_for_status()
             registration = response.json()
+            registered_session = registration.get("session", {})
+            configured_voice = _validate_voice(
+                registered_session.get("voice") or requested_voice
+            )
             config = {
                 "server_url": server_url,
                 "device_id": registration["deviceId"],
                 "device_token": registration["deviceToken"],
                 "setup_url": registration["setupUrl"],
                 "preferred_model": str(preferred_model).strip(),
-                "voice": _validate_voice(voice),
+                "voice": configured_voice,
                 "capture_device": str(capture_device).strip() or "default",
                 "playback_device": str(playback_device).strip() or "default",
                 "wake_phrase": _validate_wake_phrase(wake_phrase),
@@ -246,6 +256,7 @@ async def _run_worker():
         session = await _wait_for_chatgpt_auth(client, config, stop_event)
         if stop_event.is_set():
             return
+        await _sync_device_settings(client, config)
         models_response = await client.get(_device_path(config, "/models"))
         models_response.raise_for_status()
         models = models_response.json().get("models", [])
@@ -293,6 +304,19 @@ async def _wait_for_chatgpt_auth(client, config, stop_event):
     if stop_event.is_set():
         return {}
     raise TimeoutError("ChatGPT authorization was not completed within fifteen minutes.")
+
+
+async def _sync_device_settings(client, config):
+    """Apply server-owned phone settings before negotiating a new Live call."""
+    response = await client.get(_device_settings_path(config))
+    response.raise_for_status()
+    configured_voice = _validate_voice(
+        response.json().get("voice") or config.get("voice", DEFAULT_VOICE)
+    )
+    if configured_voice != config.get("voice"):
+        config["voice"] = configured_voice
+        _write_private_json(CONFIG_FILE, config)
+    return config
 
 
 async def _run_live_session(client, config, model, stop_event):
@@ -394,7 +418,7 @@ async def _run_live_session(client, config, model, stop_event):
                             "live",
                             message=f"{wake_state['phrase'].title()} heard. GPT Live is listening.",
                             model=model,
-                            voice=config.get("voice", "juniper"),
+                            voice=config.get("voice", DEFAULT_VOICE),
                             wake_phrase=wake_state["phrase"],
                         )
                     else:
@@ -499,7 +523,7 @@ async def _run_live_session(client, config, model, stop_event):
                         state,
                         message=f"GPT Live is {state}.",
                         model=model,
-                        voice=config.get("voice", "juniper"),
+                        voice=config.get("voice", DEFAULT_VOICE),
                         wake_phrase=wake_state["phrase"],
                     )
                 else:
@@ -556,7 +580,7 @@ async def _run_live_session(client, config, model, stop_event):
         _device_path(config, "/realtime/app-server"),
         json={
             "sdp": pc.localDescription.sdp,
-            "session": {"voice": config.get("voice", "juniper"), "model": model},
+            "session": {"voice": config.get("voice", DEFAULT_VOICE), "model": model},
         },
     )
     response.raise_for_status()
@@ -748,6 +772,10 @@ def _register_device(client, server_url, bootstrap_token, payload):
 
 def _device_path(config, subpath):
     return f"/api/device/{config['device_id']}/chatgpt{subpath}"
+
+
+def _device_settings_path(config):
+    return f"/api/device/{config['device_id']}/settings"
 
 
 def _ensure_worker_started():
@@ -1119,7 +1147,7 @@ def _write_armed_status(config, model, phrase):
         "armed",
         message=f"Say {phrase.title()} to start GPT Live.",
         model=model,
-        voice=config.get("voice", "juniper"),
+        voice=config.get("voice", DEFAULT_VOICE),
         wake_phrase=phrase,
     )
 
@@ -1184,9 +1212,11 @@ def _validate_server_url(value):
 
 
 def _validate_voice(value):
-    value = str(value).strip()
-    if not value or len(value) > 64:
-        raise ValueError("The voice must be a non-empty string of at most 64 characters.")
+    value = str(value).strip().lower()
+    if value not in SUPPORTED_VOICES:
+        raise ValueError(
+            "The voice must be one of: " + ", ".join(sorted(SUPPORTED_VOICES)) + "."
+        )
     return value
 
 

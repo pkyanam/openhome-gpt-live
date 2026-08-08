@@ -48,6 +48,43 @@ class DevKitProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no Codex models"):
             live._choose_model([], "")
 
+    def test_accepts_only_supported_chatgpt_voices(self):
+        self.assertEqual(live._validate_voice(" Vale "), "vale")
+        self.assertEqual(live._validate_voice("Juniper"), "juniper")
+        with self.assertRaisesRegex(ValueError, "must be one of"):
+            live._validate_voice("made-up")
+
+    def test_syncs_phone_selected_voice_before_live_connects(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"voice": "vale"}
+
+        class Client:
+            def __init__(self):
+                self.paths = []
+
+            async def get(self, path):
+                self.paths.append(path)
+                return Response()
+
+        original = live.CONFIG_FILE
+        with tempfile.TemporaryDirectory() as directory:
+            live.CONFIG_FILE = Path(directory) / "config.json"
+            client = Client()
+            config = {"device_id": "dev_1", "voice": "juniper"}
+            try:
+                asyncio.run(live._sync_device_settings(client, config))
+                saved = json.loads(live.CONFIG_FILE.read_text(encoding="utf-8"))
+            finally:
+                live.CONFIG_FILE = original
+
+        self.assertEqual(client.paths, ["/api/device/dev_1/settings"])
+        self.assertEqual(config["voice"], "vale")
+        self.assertEqual(saved["voice"], "vale")
+
     def test_requires_https_except_loopback(self):
         self.assertEqual(live._validate_server_url("https://voice.example.test/"), "https://voice.example.test")
         self.assertEqual(live._validate_server_url("http://127.0.0.1:3000"), "http://127.0.0.1:3000")

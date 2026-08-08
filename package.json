@@ -1,6 +1,6 @@
 {
   "name": "openhome-gpt-live",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "description": "Use ChatGPT GPT Live as the wake-word voice and Codex tool plane for an OpenHome DevKit.",
   "type": "module",
@@ -21,7 +21,8 @@
     "service:status": "bun scripts/service.ts status",
     "service:uninstall": "bun scripts/service.ts uninstall",
     "upload:ability": "bun scripts/upload-ability.ts",
-    "openhome:config": "bun scripts/show-openhome-config.ts"
+    "openhome:config": "bun scripts/show-openhome-config.ts",
+    "pairing:code": "bun scripts/pairing-code.ts"
   },
   "dependencies": {
     "@opencoredev/loginwithchatgpt-core": "workspace:*",

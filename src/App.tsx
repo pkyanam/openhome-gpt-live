@@ -34,7 +34,7 @@ export function App() {
   const liveRef = useRef<ChatGPTRealtimeAppServerConnection | undefined>(undefined);
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState("");
-  const [voice, setVoice] = useState("juniper");
+  const [voice, setVoice] = useState("vale");
   const [state, setState] = useState<UiState>("closed");
   const [connecting, setConnecting] = useState(false);
   const [inputMuted, setInputMuted] = useState(false);

@@ -1,36 +1,46 @@
 # Changelog
 
+## 0.2.0 - 2026-08-08
+
+- Keep the verified Login with ChatGPT app-server transport as the single GPT
+  Live path; remove the abandoned direct-`/wm` signaling experiment.
+- Route explicit/current requests to the signed-in ChatGPT subscription's
+  first-party `web_search` tool, interrupting the automatic Codex turn and
+  speaking results through GPT Live.
+- Keep file, project, OpenHome, application, and computer actions in the
+  serialized Codex handoff lane with immediate acknowledgement and guaranteed
+  completion speech.
+- Add a paired-phone picker for Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
+  Spruce, and Vale. Vale is the new-device default; speaking voice and wake
+  phrase remain independent.
+- Persist the selected voice server-side and reconnect GPT Live automatically
+  after a change.
+- Add `bun run pairing:code -- --wait=180`, backed by a private 15-minute inbox,
+  so setup never depends on speaker audio or raw log inspection.
+- Rewrite installation, architecture, troubleshooting, Ability, security, and
+  coding-agent documentation around the live-verified production flow.
+
 ## 0.1.2 - 2026-08-08
 
-- Track Codex handoffs as explicit running, queued, deduplicated, and completed
-  tasks instead of allowing overlapping voice requests to silently replace one
-  another.
-- Guarantee a spoken completion notice from app-server `turn/completed` even
-  when the execution agent omits `speak_to_user`.
-- Keep native GPT Live available while Codex works, and let Codex perform a web
-  search as a fallback if Live delegates one anyway.
+- Track Codex handoffs as running, queued, deduplicated, and completed tasks.
+- Guarantee a spoken completion notice when the execution agent omits
+  `speak_to_user`.
 - Answer app-server clock reads from the live host clock and re-arm the DevKit
-  on every completed assistant turn, including bridge-appended speech.
-- Show Codex busy, queue, and last-task state on the paired-phone page without
-  persisting voice transcripts.
-- Upgrade an existing OpenHome Ability in place from the CLI while preserving
-  its id and linked Third Party Keys.
+  after each completed assistant turn.
+- Upgrade an existing OpenHome Ability in place while preserving its id and
+  linked Third Party Keys.
 
 ## 0.1.1 - 2026-08-08
 
-- Prevent non-interactive setup from consuming the remaining input of a
-  `curl | bash` installer pipeline.
-- Add a regression test that supplies sentinel installer input over stdin.
+- Prevent non-interactive setup from consuming remaining `curl | bash` input.
+- Add a regression test for piped installer input.
 - Use Bun-aware Dependabot lockfile updates and current GitHub Action majors.
 
 ## 0.1.0 - 2026-08-08
 
 - Initial public release.
 - Headless GPT Live WebRTC on an OpenHome Local/Background Ability.
-- Offline per-request Juniper wake word and PipeWire WebRTC echo cancellation.
-- Spoken barge-in, streamed playback, reconnect, and boot persistence.
+- Offline per-request Juniper wake word and PipeWire echo cancellation.
 - Phone-based ChatGPT authorization and consequential-action approvals.
-- Codex workspace, confirmed host-control, and owner-authorized Full Access modes.
-- Immediate Codex handoff acknowledgement and asynchronous spoken completion.
-- Fresh owner-local date/time context for every wake request.
-- One-line installer, service manager, doctor, reproducible Ability ZIP, and CI.
+- Codex workspace, confirmed host-control, and Full Access modes.
+- One-line installer, service manager, doctor, reproducible ZIP, and CI.

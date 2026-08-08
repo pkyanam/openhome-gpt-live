@@ -202,6 +202,91 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     });
   });
 
+  test("routes web handoffs through OpenAI search without starting Codex", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const searched: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: (transcript) => transcript.includes("search the web") ? "openai_search" : "codex",
+      executeSearch: async (transcript) => {
+        searched.push(transcript);
+        return "OpenHome released version one point two today, according to GitHub.";
+      },
+      searchAcknowledgement: "I’m searching OpenAI now.",
+      now: () => 1_000,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).threadId = "thread_1";
+    (session as any).speak = async (text: string) => speech.push(text);
+    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params });
+      return { result: {} };
+    };
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Juniper, search the web for today's OpenHome news",
+      },
+    });
+    (session as any).handleNotification("turn/started", { turn: { id: "turn_search" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(searched).toEqual(["search the web for today's OpenHome news"]);
+    expect(speech).toEqual([
+      "I’m searching OpenAI now.",
+      "OpenHome released version one point two today, according to GitHub.",
+    ]);
+    expect(requests).toEqual([{
+      method: "turn/interrupt",
+      params: { threadId: "thread_1", turnId: "turn_search" },
+    }]);
+    expect(events.some((event) => event.type === "handoff.started")).toBe(false);
+    expect(events.some((event) => event.type === "search.started")).toBe(true);
+    expect(events.some((event) => event.type === "search.completed" && event.status === "completed")).toBe(true);
+  });
+
+  test("keeps OpenAI search available while a Codex task is running", async () => {
+    const speech: string[] = [];
+    const searched: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: (transcript) => transcript.includes("latest news") ? "openai_search" : "codex",
+      executeSearch: async (transcript) => {
+        searched.push(transcript);
+        return "Here is the current result.";
+      },
+      handoffAcknowledgement: "Codex started.",
+      searchAcknowledgement: "Searching OpenAI.",
+      now: () => 1_000,
+    });
+    (session as any).threadId = "thread_1";
+    (session as any).speak = async (text: string) => speech.push(text);
+    (session as any).expectResult = async () => ({ result: {} });
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Build a game in my workspace." },
+    });
+    (session as any).handleNotification("turn/started", { turn: { id: "turn_codex" } });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Juniper, search for the latest news" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(searched).toEqual(["search for the latest news"]);
+    expect(speech).toContain("Codex started.");
+    expect(speech).toContain("Searching OpenAI.");
+    expect(speech).toContain("Here is the current result.");
+    expect((session as any).queuedTasks).toHaveLength(0);
+    expect((session as any).activeTask?.transcript).toBe("Build a game in my workspace.");
+  });
+
   test("queues overlapping handoffs, deduplicates retries, and isolates the next turn", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];

@@ -106,6 +106,7 @@ class BackgroundProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(names, ["live_status", "configure_and_start", "stop_live"])
         self.assertEqual(capability.capability_worker.spoken, ["Pair this phone."])
         configure_args = capability.capability_worker.calls[1][1]
+        self.assertEqual(configure_args[3], "vale")
         self.assertEqual(configure_args[-2:], ["juniper", "30"])
 
 

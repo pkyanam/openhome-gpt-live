@@ -6,6 +6,7 @@ import type { ChatGPTHandler } from "@opencoredev/loginwithchatgpt-server";
 import { DeviceRegistry, type DeviceRecord } from "./device-registry.ts";
 import { createDeviceRoutes, keepAliveNdjson } from "./device-routes.ts";
 import { JsonFileStore } from "./file-store.ts";
+import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
 
 const BOOTSTRAP_TOKEN = "b".repeat(64);
 const temporaryDirectories: string[] = [];
@@ -35,11 +36,15 @@ describe("headless DevKit routes", () => {
     const internalRequests: Request[] = [];
     let confirmationBody: unknown;
     const auth = fakeAuth(internalRequests, (value) => { confirmationBody = value; });
+    const pairingCodes = new PairingCodeStore(
+      new JsonFileStore<PairingCodeRecord>(join(directory, "pairing-codes.json")),
+    );
     const route = createDeviceRoutes({
       auth,
       registry,
       bootstrapToken: BOOTSTRAP_TOKEN,
       publicBaseUrl: "https://voice.example.test",
+      pairingCodes,
     });
 
     const denied = await route(jsonRequest("https://service.test/api/device/register", {
@@ -61,6 +66,13 @@ describe("headless DevKit routes", () => {
       setupUrl: string;
     };
     expect(registration.setupUrl).toBe("https://voice.example.test/setup");
+    expect((await pairingCodes.latest())?.code).toBe(registration.pairingCode);
+
+    const settingsBefore = await route(new Request(
+      `https://service.test/api/device/${registration.deviceId}/settings`,
+      { headers: { authorization: `Bearer ${registration.deviceToken}` } },
+    ));
+    expect(await settingsBefore.json()).toEqual({ voice: "vale" });
 
     const deviceBase = `https://service.test/api/device/${registration.deviceId}/chatgpt`;
     const loginResponse = await route(new Request(`${deviceBase}/login`, {
@@ -79,6 +91,7 @@ describe("headless DevKit routes", () => {
     const pairingCookie = claimResponse.headers.get("set-cookie")!.split(";")[0]!;
     expect(pairingCookie).toStartWith("ohgpt_pairing=");
     expect(claimResponse.headers.get("set-cookie")).toContain("Secure");
+    expect(await pairingCodes.latest()).toBeUndefined();
 
     const sessionResponse = await route(new Request(`${deviceBase}/session`, {
       headers: { authorization: `Bearer ${registration.deviceToken}` },
@@ -121,6 +134,37 @@ describe("headless DevKit routes", () => {
       headers: { cookie: pairingCookie },
     }));
     expect((await pairedAfter.json() as { session: { pendingConfirmations: unknown[] } }).session.pendingConfirmations).toEqual([]);
+
+    await registry.update(registration.deviceId, (record) => { record.codexState = "working"; });
+    const busyVoiceResponse = await route(jsonRequest("https://service.test/api/pairing/voice", {
+      method: "POST",
+      cookie: pairingCookie,
+      body: { voice: "vale" },
+    }));
+    expect(busyVoiceResponse.status).toBe(409);
+    await registry.update(registration.deviceId, (record) => { record.codexState = "idle"; });
+
+    const voiceResponse = await route(jsonRequest("https://service.test/api/pairing/voice", {
+      method: "POST",
+      cookie: pairingCookie,
+      body: { voice: "vale" },
+    }));
+    expect(voiceResponse.status).toBe(200);
+    expect(await voiceResponse.json()).toMatchObject({
+      reconnecting: true,
+      session: { voice: "vale", connectionState: "closed" },
+    });
+    expect(internalRequests.some((request) =>
+      request.method === "DELETE"
+      && new URL(request.url).pathname.endsWith("/realtime/app-server/live-1")
+    )).toBeTrue();
+
+    const invalidVoice = await route(jsonRequest("https://service.test/api/pairing/voice", {
+      method: "POST",
+      cookie: pairingCookie,
+      body: { voice: "made-up" },
+    }));
+    expect(invalidVoice.status).toBe(400);
     expect(internalRequests.every((request) => !request.headers.has("authorization"))).toBeTrue();
     expect(internalRequests.slice(1).every((request) => request.headers.get("cookie") === "lwc_session=opaque-login-cookie")).toBeTrue();
   });
@@ -168,6 +212,9 @@ function fakeAuth(
     if (path === "/realtime/app-server/live-1/confirm") {
       setConfirmation(await request.json());
       return Response.json({ status: "resolved", callId: "call-1" });
+    }
+    if (path === "/realtime/app-server/live-1" && request.method === "DELETE") {
+      return Response.json({ status: "closed" });
     }
     return Response.json({ error: "not_found" }, { status: 404 });
   };

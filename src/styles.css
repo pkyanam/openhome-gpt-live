@@ -52,6 +52,7 @@ h2 { font-size: 1.25rem; }
 
 .lede { max-width: 690px; margin: 1.3rem 0 0; color: #adb3ad; font-size: 1.05rem; line-height: 1.6; }
 .error-banner { margin-bottom: 1rem; padding: 0.9rem 1rem; border: 1px solid #8b4739; border-radius: 0.8rem; background: #2a1713; color: #ffb49f; }
+.notice-banner { margin-bottom: 1rem; padding: 0.9rem 1rem; border: 1px solid #4f8964; border-radius: 0.8rem; background: #12231a; color: #aaf0c2; }
 
 .control-deck, .panel, .confirmations {
   border: 1px solid #292d29;
@@ -108,6 +109,10 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
 .pairing-form { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; margin-top: 1.2rem; }
 .pairing-code-input { min-width: 0; font: 700 clamp(1.5rem, 7vw, 2.4rem)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.15em; text-align: center; }
 .device-card, .authenticated-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.voice-settings-card { display: grid; grid-template-columns: 1fr minmax(250px, 0.75fr); gap: 1rem; align-items: end; }
+.voice-settings-card p:not(.eyebrow) { margin: 0.55rem 0 0; color: #adb3ad; line-height: 1.5; }
+.voice-picker { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; align-items: end; }
+.voice-picker small { grid-column: 1 / -1; color: #c5ad70; }
 .connection-pill { padding: 0.5rem 0.7rem; border: 1px solid #4a514b; border-radius: 999px; color: #aeb5af; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
 .connection-live, .connection-authenticated { border-color: #5faa79; color: #9ee9bb; background: rgba(71, 145, 98, 0.1); }
 .connection-error, .connection-failed { border-color: #8b4739; color: #ffb49f; }
@@ -131,6 +136,7 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
   .confirmation-card, footer { align-items: stretch; flex-direction: column; }
   .authorization-grid { grid-template-columns: 1fr; }
   .device-card, .authenticated-card { align-items: flex-start; flex-direction: column; }
+  .voice-settings-card { grid-template-columns: 1fr; }
   .session-facts { width: 100%; justify-content: space-between; }
 }
 
@@ -142,5 +148,6 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
   .transcript-line { grid-template-columns: 1fr; gap: 0.25rem; }
   .pairing-shell { width: min(100% - 1rem, 760px); padding-top: 1.2rem; }
   .pairing-form { grid-template-columns: 1fr; }
+  .voice-picker { grid-template-columns: 1fr; }
   .session-facts { flex-direction: column; }
 }

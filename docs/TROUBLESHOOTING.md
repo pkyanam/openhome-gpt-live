@@ -14,7 +14,7 @@ Then match the symptom below.
 
 **“Expected a single top-level directory in ability zipfile”** or
 **“`__init__.py` file not found”** means the archive was rebuilt incorrectly.
-Do not zip the individual files yourself. Use the release asset or run:
+Do not zip the individual files yourself. Run:
 
 ```bash
 bun run package:ability
@@ -26,31 +26,50 @@ Every entry must be under `openhome-gpt-live/`, including
 
 ## “Installed Ability does not exist”
 
-OpenHome still has an installed record that points at an Ability you removed.
-Do not keep toggling that stale card.
+The Agent has an installed record pointing at an Ability object that was
+removed.
 
-1. Open **My Abilities** and confirm **OpenHome GPT Live** exists there.
+1. Open **My Abilities** and confirm **OpenHome GPT Live** exists.
 2. Install that Ability on the active Agent again.
 3. Tap **Sync Abilities**, then **Restart Agent**.
-4. Return to **Installed Abilities** and enable the newly installed record.
+4. Enable the newly installed record under **Installed Abilities**.
 
-If the Ability itself is missing, upload the ZIP again first.
-
-## Sync does not restore an uninstalled Ability
-
-Sync updates Abilities that are installed; it does not reinstall one deleted
-from the device/Agent assignment. Reinstall from **My Abilities**, then sync and
-restart.
+Sync updates installed Abilities; it does not reinstall one removed from the
+Agent. Upload the ZIP again first if the Ability object itself is missing.
 
 ## The speaker says configuration is missing
 
-Both exact Third Party Key names must exist and be linked to the Ability:
+Create and link these exact Third Party Keys:
 
 - `openhome_gpt_live_server_url`
 - `openhome_gpt_live_bootstrap_token`
 
 Print the correct values with `bun run openhome:config`. Do not use the
-OpenAI/OpenRouter key fields; this integration does not consume them.
+OpenAI/OpenRouter key fields; this project does not consume them.
+
+## I cannot hear or find the pairing code
+
+Speaker audio is optional. After installing/syncing the Ability and restarting
+the Agent, run on the host:
+
+```bash
+bun run pairing:code -- --wait=180
+```
+
+Open the printed one-click URL. If no code appears, the DevKit has not
+successfully registered. Check the public health endpoint, Third Party Key
+links, Ability installation, Sync Abilities, and Restart Agent in that order.
+
+Codes expire after 15 minutes. Restart the Agent to request another one. The
+local inbox is mode 0600 and deletes a code when it is paired or expires.
+
+## The ChatGPT authorization code is missing
+
+The eight-digit OpenHome pairing code comes first. After the phone is paired,
+the DevKit requests a separate ChatGPT device code. Keep `/setup` open for a
+few seconds; it refreshes automatically. Tap **Open ChatGPT authorization** and
+enter the code shown there. Do not paste a bearer token or capture browser
+cookies.
 
 ## Saying “Juniper” does nothing
 
@@ -59,76 +78,84 @@ Check in order:
 1. `curl http://127.0.0.1:3000/healthz` works on the host.
 2. `curl https://your-public-host/healthz` works through the tunnel.
 3. **OpenHome GPT Live** is installed and enabled on the active Agent.
-4. Both Third Party Keys are linked to that Ability.
-5. You tapped **Sync Abilities** and then **Restart Agent** after the last change.
-6. The phone `/setup` page says the DevKit is authenticated and ChatGPT is
-   connected.
+4. Both required Third Party Keys are linked to that Ability.
+5. You tapped **Sync Abilities** and **Restart Agent** after the latest upload.
+6. `/setup` says the DevKit is live and ChatGPT is connected.
 
-Say the wake phrase as part of the request: “Juniper, tell me the weather,” not
-just “Juniper” followed by a long pause.
+Say the wake phrase as part of one request: “Juniper, explain photosynthesis,”
+not “Juniper” followed by a long pause.
 
-## Codex finishes silently, mixes two requests, or web search bounces back
+## Web search says unavailable or starts Codex
 
-Upgrade both halves of the integration to **0.1.2 or newer**. Older bridges
-depended on the execution agent to call its speech tool and allowed a second
-handoff to steer the first task's active turn.
+Upgrade the host and Ability to **0.2.0 or newer**. The working design uses the
+structured app-server handoff: explicit/current queries go to the signed-in
+ChatGPT subscription's Responses endpoint with a required `web_search` call,
+then the result is spoken through GPT Live. Local Codex is not involved.
 
-After upgrading the host, upload the rebuilt Ability ZIP in the existing
-Ability editor, save, tap **Sync Abilities**, and restart the Agent. Do not
-delete and recreate the Ability. The `/setup` page should then show **Codex:
-idle** or **working**, plus a queue count when another delegated request is
-waiting.
+After upgrading, update the same Ability object in place, tap **Sync Abilities**,
+and **Restart Agent**. On `/setup`, a successful request should show **Last
+routed request: OpenAI web search** while Codex remains idle.
 
-Native GPT Live normally performs web searches itself. If it delegates one,
-the Codex backend now treats that delegation as a search fallback instead of
-asking the native assistant to try again.
+## Codex finishes silently or mixes requests
 
-## The reported time is several minutes old
+Version 0.2.0 serializes and deduplicates Codex handoffs, acknowledges accepted
+work, isolates queued turns, and guarantees a fallback completion announcement.
+Upgrade both host and Ability. Confirm `codex --version` and `codex login
+status` work for the same host user, then inspect `data/server-error.log`.
 
-Version 0.1.2 treats every completed assistant transcript as a hard return to
-wake mode, including speech appended by the bridge. This ensures the next
-“Juniper” refreshes the Mac's clock before its request audio is forwarded. It
-also answers app-server `currentTime/read` requests directly from the host
-clock. Upgrade the Ability, sync, and restart the Agent if the phone page still
-shows an older live session.
+## The date or time is stale
+
+The DevKit refreshes an authenticated host-clock context before every wake
+request, and the app-server answers clock reads from the host clock. Confirm the
+host's system time and timezone are correct. Clock questions use neither web
+search nor Codex.
+
+## Changing the voice has no effect
+
+Use the picker on the paired `/setup` page. Saving closes the current Live
+session and normally reconnects within about ten seconds. Refresh the page and
+confirm the selected voice remains visible and the connection returns to live.
+
+If it stays closed, restart the Agent once. The optional
+`openhome_gpt_live_voice` Third Party Key is only an initial value; the paired
+phone selection is server-owned and should win after enrollment.
+
+The supported voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
+Spruce, and Vale. Voice and wake phrase are independent.
 
 ## It worked until a reboot
 
-On the host, run `bun run service:status`. On the DevKit, the Ability installs a
-per-user `openhome-gpt-live.service` when systemd is available. Reinstalling the
-host service is safe:
+Run `bun run service:status` on the host. Reinstalling the service is safe:
 
 ```bash
 bun run service:install
 ```
 
-If you used a temporary `trycloudflare.com` URL, it changed at reboot. Create a
-stable tunnel, rerun `bun run setup`, update
-`openhome_gpt_live_server_url`, sync, and restart the Agent.
+The host must remain awake and online. If you used a temporary
+`trycloudflare.com` URL, it changed when the tunnel restarted. Create a stable
+hostname, rerun setup, update `openhome_gpt_live_server_url`, then sync and
+restart the Agent.
 
-The host computer must also remain awake and online. A closed or sleeping
-MacBook pauses the bridge even though launchd still considers the service
-installed.
+The Ability installs a per-user DevKit service where systemd is available. If
+the public endpoint is healthy but `/setup` remains closed, restart the Agent.
 
 ## The setup page says “closed”
 
-“Closed” means the last 30-minute WebRTC transport ended. The DevKit watchdog
-should create another session automatically. Wait up to one minute and refresh.
-If it remains closed, restart the Agent and inspect the DevKit log in the
-Ability editor.
+The current WebRTC transport ended. The DevKit watchdog should reconnect in
+under one minute. A deliberate voice change also produces this state briefly.
+If it persists, restart the Agent and inspect the Ability's DevKit log.
 
 ## No startup sound
 
-OpenHome does not guarantee a startup sound for this Local Ability. Use the
-phone `/setup` state and `live_status` diagnostics instead. A silent boot can
-still reach the armed state.
+OpenHome does not guarantee a startup sound for this Local Ability. Use
+`/setup`, `bun run pairing:code`, and the safe `live_status` diagnostic instead.
+A silent boot can still reach the armed state.
 
 ## Audio cuts out, crackles, or pauses
 
 The default path expects `parec`, `paplay`, `pactl`, PipeWire-Pulse, and a
 working default microphone/speaker. In the Ability editor, invoke the
-`audio_devices` DevKit function and set these optional Third Party Keys when the
-defaults are wrong:
+`audio_devices` DevKit function. When defaults are wrong, set:
 
 - `openhome_gpt_live_capture_device`
 - `openhome_gpt_live_playback_device`
@@ -137,35 +164,21 @@ Custom ALSA device names bypass the default PipeWire echo-cancel path.
 
 ## Juniper hears itself or interruption requires yelling
 
-The official DevKit default uses PipeWire's WebRTC acoustic echo canceller.
-Confirm `pactl`, `parec`, and `paplay` exist and that the Ability is using
-`default` for both audio devices. Do not point capture directly at an exclusive
-hardware ALSA source unless diagnosing.
+The official DevKit path uses PipeWire's WebRTC acoustic echo canceller.
+Confirm the Ability uses `default` for capture and playback. Do not point
+capture directly at an exclusive hardware ALSA source unless diagnosing.
 
-Every interruption also requires “Juniper.” The worker mutes playback
-immediately after the offline detector hears it, then forwards the replacement
-request. Room acoustics, speaker volume, and custom Raspberry Pi hardware can
-still affect double-talk performance.
+Every interruption also requires “Juniper.” The worker cuts playback when its
+offline detector hears the phrase, then forwards the replacement request. Room
+acoustics, volume, and custom Raspberry Pi hardware can still affect double
+talk.
 
 ## Both OpenHome and Juniper answer
 
-The public OpenHome SDK does not expose a provider-registration hook. Enable
-the built-in Agent wake word and change it to a reserved recovery phrase, then
-restart the Agent. Do not disable the built-in wake word; that makes the default
-pipeline answer ambient speech.
-
-## Codex starts but the speaker is silent
-
-The bridge should acknowledge the handoff after Codex accepts it and speak the
-result when complete. Check `data/server-error.log`, confirm `codex --version`
-works for the same host user, and run the doctor. Long tasks keep Live available
-for other conversation, but only their final result is spoken.
-
-## Date or time is stale
-
-The DevKit refreshes an authenticated host-clock context on every wake. Confirm
-the host computer's time and timezone are correct and that the public bridge is
-reachable. Time questions do not use web search or a Codex handoff.
+OpenHome's public Ability SDK does not expose a provider-registration hook.
+Enable the built-in Agent wake word and change it to a reserved recovery phrase,
+then restart the Agent. Do not disable the built-in wake word; that can make the
+default pipeline answer ambient speech.
 
 ## Firmware version
 
