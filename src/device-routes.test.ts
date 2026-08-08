@@ -108,6 +108,13 @@ describe("headless DevKit routes", () => {
     }));
     expect(startResponse.status).toBe(201);
     expect(await startResponse.json()).toEqual({ sessionId: "live-1", sdp: "v=0\r\nanswer" });
+    const forwardedStart = internalRequests.find((request) =>
+      request.method === "POST"
+      && new URL(request.url).pathname.endsWith("/realtime/app-server")
+    );
+    expect(await forwardedStart?.json()).toMatchObject({
+      session: { model: "gpt-live-test", voice: "vale" },
+    });
 
     const eventsResponse = await route(new Request(`${deviceBase}/realtime/app-server/live-1/events`, {
       headers: { authorization: `Bearer ${registration.deviceToken}` },

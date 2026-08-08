@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 - 2026-08-08
+
+- Make the paired phone's saved voice authoritative during every Live
+  negotiation. The host now replaces a stale DevKit voice before forwarding
+  the session to GPT Live, so an older local configuration cannot roll Vale or
+  another selected voice back to Juniper.
+
 ## 0.2.1 - 2026-08-08
 
 - Reconnect GPT Live inside the long-running DevKit worker after a voice change,
