@@ -26,7 +26,7 @@ screen, keyboard, or mouse.
 - `openhome_gpt_live_model` — exact entitled Codex model slug; otherwise the
   first discovered model is used.
 - `openhome_gpt_live_voice` — initial voice for a newly enrolled device;
-  defaults to `vale`. After pairing, use the `/setup` phone picker.
+  defaults to `vale`. After pairing, use the `/setup` browser picker.
 - `openhome_gpt_live_capture_device` — ALSA source, default `default`.
 - `openhome_gpt_live_playback_device` — ALSA sink, default `default`.
 - `openhome_gpt_live_wake_phrase` — default `juniper`.
@@ -34,17 +34,18 @@ screen, keyboard, or mouse.
   never completes; default 30 seconds.
 
 Supported GPT Live voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
-Spruce, and Vale. Speaking voice and wake phrase are independent. A phone voice
-change closes the current Live transport; the DevKit worker reads the new
-server-owned setting and reconnects in-process without waiting for OpenHome or
-systemd to relaunch it.
+Spruce, and Vale. Speaking voice and wake phrase are independent. Changing the
+voice in the browser control page closes the current Live transport; the DevKit
+worker reads the new server-owned setting and reconnects in-process without
+waiting for OpenHome or systemd to relaunch it.
 
 ## First pairing
 
 After registration, the DevKit may announce the setup URL and eight-digit code.
 Audio is optional: on the host, `bun run pairing:code -- --wait=180` prints the
-same short-lived code and a one-click setup link. Pair the phone there and
-complete ChatGPT device authorization.
+same short-lived code and a one-click setup link. Pair a trusted browser there
+and complete ChatGPT device authorization. The page is hosted by the Mac/Linux
+bridge, not the OpenHome mobile app.
 
 ## OpenHome fallback voice
 

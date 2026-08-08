@@ -19,7 +19,7 @@ Login with ChatGPT app-server bridge on the owner's computer
                                                         ▼
                                                   appendSpeech result
 
-Phone /setup page
+Browser /setup control page
   one-time DevKit pairing
   ChatGPT device authorization
   GPT Live voice selection
@@ -47,9 +47,9 @@ sends the native stop-speaking action.
 ## Host and Login with ChatGPT
 
 The Bun bridge must remain running. It stores encrypted Login with ChatGPT
-sessions, hashed device credentials, and phone pairing state under `data/`.
+sessions, hashed device credentials, and browser-pairing state under `data/`.
 ChatGPT bearer/refresh material and the OpenHome API key never go to the DevKit
-or phone.
+or browser.
 
 The DevKit sends an SDP offer to the authenticated app-server Realtime route.
 The vendored SDK starts an isolated Codex app-server process with the signed-in
@@ -86,7 +86,7 @@ and guarantees a spoken completion fallback if the execution agent omits its
 own `speak_to_user` call.
 
 OpenHome mutations use prepare/review/confirm. Workspace-only Codex uses
-`workspace-write`. Phone-confirmed host actions run outside the workspace only
+`workspace-write`. Browser-confirmed host actions run outside the workspace only
 after `/setup` approval. Full Access deliberately uses `danger-full-access`
 with approval policy `never`.
 
@@ -98,12 +98,14 @@ inbox retains the raw code for `bun run pairing:code`; it is removed on claim or
 expiry. The helper prints a one-click `/setup#pairing=…` link, so speaker audio
 and log access are optional.
 
-The phone receives a distinct HttpOnly pairing cookie. It can complete ChatGPT
-device authorization, approve pending actions, and select one of the SDK's nine
-known GPT Live voices. A voice change updates server-owned device settings and
-closes the current Live session. The DevKit watchdog reconnects, reads the new
-setting through its device credential, and negotiates the new voice. Wake phrase
-configuration remains independent.
+The browser profile opened to `/setup` receives a distinct HttpOnly pairing
+cookie. It can complete ChatGPT device authorization, approve pending actions,
+and select one of the SDK's nine known GPT Live voices. It may run on the host,
+another computer, a phone, or a tablet; it is not an OpenHome-mobile surface.
+A voice change updates server-owned device settings and closes the current Live
+session. The DevKit watchdog reconnects, reads the new setting through its
+device credential, and negotiates the new voice. Wake phrase configuration
+remains independent.
 
 ## Lifecycle
 

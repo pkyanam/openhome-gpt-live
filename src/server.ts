@@ -116,7 +116,7 @@ auth = createChatGPTHandler({
             "request requires it. Do not broaden the current request. "
           : "You may inspect, create, edit, and test files inside the configured workspace using Codex " +
             "workspace-write tools. For macOS control or access outside that workspace, use " +
-            "codex_prepare_mac_task and wait for paired-phone approval. ") +
+            "codex_prepare_mac_task and wait for approval in the paired browser control page. ") +
         "Never claim a mutation completed when it is pending UI confirmation. " +
         "After finishing, call speak_to_user exactly once with a concise spoken result.",
       realtimePrompt:
@@ -131,7 +131,7 @@ auth = createChatGPTHandler({
         "changing files in the " +
         "configured local workspace, or controlling the paired Mac through Codex. " +
         (fullCodexAccess
-          ? "Mac control is owner-authorized for direct delegated execution without phone confirmation. "
+          ? "Mac control is owner-authorized for direct delegated execution without browser confirmation. "
           : "Outside-workspace Mac control must use the confirmed Codex Mac tool. ") +
         "The bridge acknowledges a Codex handoff after execution actually starts. Do not add vague filler such " +
         "as 'checking' or 'one moment'. Do not independently perform or answer the same delegated task, but remain " +
@@ -161,7 +161,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.2.2" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.2.3" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

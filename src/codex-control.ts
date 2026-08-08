@@ -81,7 +81,7 @@ const MAC_CONTROL_TOOLS: readonly RealtimeDynamicTool[] = [
     name: MAC_TASK_TOOL,
     description:
       "Prepare a Codex task that needs to control macOS or access files outside the configured workspace. " +
-      "The paired phone must approve it before anything runs. Do not use this for work fully inside the workspace.",
+      "The paired browser control page must approve it before anything runs. Do not use this for work fully inside the workspace.",
     inputSchema: {
       type: "object",
       properties: {
@@ -105,7 +105,7 @@ async function runConfirmedCodexTask(
   const temporary = await mkdtemp(join(tmpdir(), "openhome-codex-task-"));
   const outputFile = join(temporary, "last-message.txt");
   const prompt =
-    "This Mac task was explicitly approved on the paired OpenHome phone. " +
+    "This Mac task was explicitly approved in the paired OpenHome browser control page. " +
     "Perform only the requested task and do not broaden its scope. Avoid destructive changes unless the request " +
     `explicitly requires them. Task: ${task}`;
   try {

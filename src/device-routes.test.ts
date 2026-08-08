@@ -26,7 +26,7 @@ describe("headless DevKit routes", () => {
     await reader.cancel();
   });
 
-  test("pairs a phone while keeping ChatGPT and device credentials server-side", async () => {
+  test("pairs a browser while keeping ChatGPT and device credentials server-side", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openhome-gpt-routes-"));
     temporaryDirectories.push(directory);
     const registry = new DeviceRegistry(

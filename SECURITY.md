@@ -16,8 +16,9 @@ ChatGPT, OpenHome, tunnel, or DevKit credentials.
 - ChatGPT access/refresh material and the OpenHome API key stay on the host.
 - The DevKit stores only an opaque per-device credential in its mode-0600
   worker state. The enrollment token is not copied into that worker config.
-- The phone stores a distinct HttpOnly pairing cookie. It never receives
-  ChatGPT bearer tokens or DevKit credentials.
+- The browser profile used for `/setup` stores a distinct HttpOnly pairing
+  cookie. It never receives ChatGPT bearer tokens or DevKit credentials and
+  may run on the host or another trusted device.
 - The raw eight-digit device pairing code is kept in a separate mode-0600 host
   inbox only so `bun run pairing:code` can display it. It expires after 15
   minutes and is removed immediately after a successful claim. The device

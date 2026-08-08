@@ -42,8 +42,10 @@ restarts, run:
 bun run pairing:code -- --wait=180
 ```
 
-Open the printed one-click link on your phone, pair the DevKit, and finish the
-ChatGPT device-code authorization shown on `/setup`. The raw pairing code is
+Open the printed one-click link in any trusted browser, pair the DevKit, and
+finish the ChatGPT device-code authorization shown on `/setup`. This control
+page is hosted by the Mac/Linux bridge; it is not embedded in OpenHome mobile.
+The raw pairing code is
 stored only in a short-lived private local inbox and is deleted after claim.
 
 Choose the GPT Live speaking voice on the same page. Voice changes restart the
@@ -76,11 +78,11 @@ bun run service:install
 
 If `PUBLIC_BASE_URL` or `DEVKIT_BOOTSTRAP_TOKEN` changes, update the matching
 OpenHome Third Party Key, then sync and restart. Changing `LWC_SECRET`
-invalidates saved ChatGPT login and phone pairing state. Back up `.env` and
+invalidates saved ChatGPT login and browser-pairing state. Back up `.env` and
 `data/` together.
 
 The optional `openhome_gpt_live_voice` Third Party Key is only the initial
-default for a newly enrolled DevKit. After pairing, use the phone picker; its
+default for a newly enrolled DevKit. After pairing, use the browser picker; its
 server-owned choice survives Ability syncs and Agent restarts.
 
 ## Stop or remove

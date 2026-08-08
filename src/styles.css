@@ -126,7 +126,7 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
 .session-facts div { display: grid; gap: 0.25rem; }
 .session-facts dt { color: #7f877f; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; }
 .session-facts dd { margin: 0; }
-.mobile-confirmations .confirmation-card { background: #201f14; }
+.browser-confirmations .confirmation-card { background: #201f14; }
 .pairing-note { color: #747b75; font-size: 0.8rem; line-height: 1.5; text-align: center; }
 
 @media (max-width: 840px) {
