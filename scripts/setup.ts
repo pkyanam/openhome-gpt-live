@@ -18,9 +18,9 @@ console.log("\nOpenHome GPT Live setup\n");
 console.log("This keeps ChatGPT credentials on this computer and live audio on the DevKit.");
 console.log("Press Enter to keep a value shown in brackets.\n");
 
-const terminalInput = !nonInteractive && !process.stdin.isTTY
-  ? createReadStream("/dev/tty")
-  : process.stdin;
+const terminalInput = nonInteractive
+  ? undefined
+  : !process.stdin.isTTY ? createReadStream("/dev/tty") : process.stdin;
 let mutePromptOutput = false;
 const promptOutput = new Writable({
   write(chunk, _encoding, callback) {
@@ -28,7 +28,9 @@ const promptOutput = new Writable({
     callback();
   },
 });
-const prompts = createInterface({ input: terminalInput, output: promptOutput, terminal: true });
+const prompts = terminalInput
+  ? createInterface({ input: terminalInput, output: promptOutput, terminal: true })
+  : undefined;
 
 try {
   const email = await requiredValue(
@@ -57,7 +59,7 @@ try {
   if (access === "full") {
     console.log("\nFull Access lets voice-initiated Codex tasks control this computer without approval.");
     if (!nonInteractive) {
-      const confirmation = await prompts.question("Type FULL ACCESS to confirm: ");
+      const confirmation = await prompts!.question("Type FULL ACCESS to confirm: ");
       if (confirmation.trim() !== "FULL ACCESS") throw new Error("Full Access was not confirmed.");
     } else if (process.env.OPENHOME_GPT_LIVE_ACCEPT_FULL_ACCESS !== "1") {
       throw new Error("Set OPENHOME_GPT_LIVE_ACCEPT_FULL_ACCESS=1 for non-interactive Full Access setup.");
@@ -96,8 +98,8 @@ try {
   console.log(`  openhome_gpt_live_bootstrap_token = ${values.DEVKIT_BOOTSTRAP_TOKEN}`);
   console.log("\nRun `bun run openhome:config` later if you need to see them again.");
 } finally {
-  prompts.close();
-  if (terminalInput !== process.stdin) terminalInput.close();
+  prompts?.close();
+  if (terminalInput && terminalInput !== process.stdin) terminalInput.close();
 }
 
 function configured(name: string): string {
@@ -116,7 +118,7 @@ async function requiredValue(
   }
   while (true) {
     const suffix = current ? ` [${current}]` : "";
-    const entered = (await prompts.question(`${label}${suffix}: `)).trim();
+    const entered = (await prompts!.question(`${label}${suffix}: `)).trim();
     const value = entered || current;
     const error = validate(value);
     if (!error) return value;
@@ -129,7 +131,7 @@ async function optionalSecret(label: string, current: string): Promise<string> {
   const suffix = current ? " [already saved; Enter keeps it]" : " [Enter to skip]";
   process.stdout.write(`${label}${suffix}: `);
   mutePromptOutput = true;
-  const entered = (await prompts.question("")).trim();
+  const entered = (await prompts!.question("")).trim();
   mutePromptOutput = false;
   process.stdout.write("\n");
   return entered || current;
@@ -143,7 +145,7 @@ async function chooseAccessMode(current: string): Promise<"disabled" | "confirme
   console.log("  2. Ask on the paired phone before controlling the Mac");
   console.log("  3. Full Access without approval");
   const defaultChoice = normalized === "confirmed" ? "2" : normalized === "full" ? "3" : "1";
-  const answer = (await prompts.question(`Choose 1, 2, or 3 [${defaultChoice}]: `)).trim() || defaultChoice;
+  const answer = (await prompts!.question(`Choose 1, 2, or 3 [${defaultChoice}]: `)).trim() || defaultChoice;
   if (answer === "1") return "disabled";
   if (answer === "2") return "confirmed";
   if (answer === "3") return "full";
