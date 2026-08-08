@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1 - 2026-08-08
+
+- Prevent non-interactive setup from consuming the remaining input of a
+  `curl | bash` installer pipeline.
+- Add a regression test that supplies sentinel installer input over stdin.
+- Use Bun-aware Dependabot lockfile updates and current GitHub Action majors.
+
 ## 0.1.0 - 2026-08-08
 
 - Initial public release.
