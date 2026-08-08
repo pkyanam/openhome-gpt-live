@@ -11,6 +11,7 @@ import { JsonFileStore } from "./file-store.ts";
 import { OpenHomeClient } from "./openhome-client.ts";
 import { createOpenHomeToolPolicy } from "./openhome-tools.ts";
 import { createCodexControlPolicy } from "./codex-control.ts";
+import { routeRealtimeHandoff } from "./handoff-routing.ts";
 
 const host = process.env.HOST?.trim() || "127.0.0.1";
 const port = parsePort(process.env.PORT);
@@ -91,6 +92,7 @@ auth = createChatGPTHandler({
       reasoningEffort: "low",
       handoffAcknowledgement:
         "Got it. I started that with Codex. I’ll tell you as soon as it finishes, and you can keep talking to me while it works.",
+      routeHandoff: routeRealtimeHandoff,
       executionInstructions:
         "You are the execution side of an OpenHome realtime voice assistant. " +
         "Native GPT Live normally owns ordinary conversation, memory, general knowledge, and web search. " +

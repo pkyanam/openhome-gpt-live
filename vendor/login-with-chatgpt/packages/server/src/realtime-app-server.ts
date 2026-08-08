@@ -42,6 +42,7 @@ export type RealtimeBridgeEvent =
   | { type: "handoff.started"; taskId: string; transcript: string; queued: boolean }
   | { type: "handoff.queued"; taskId: string; transcript: string; position: number }
   | { type: "handoff.deduplicated"; transcript: string }
+  | { type: "handoff.redirected"; transcript: string; destination: "native" }
   | {
     type: "handoff.completed";
     taskId: string;
@@ -73,6 +74,11 @@ export interface ChatGPTRealtimeAppServerOptions {
   realtimePrompt?: string;
   /** Spoken immediately after Codex accepts a native Live handoff. */
   handoffAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /**
+   * Routes an incoming native handoff. Returning `native` interrupts the
+   * automatically-created Codex turn and retries the request in GPT Live.
+   */
+  routeHandoff?: (transcript: string) => "codex" | "native";
   cwd?: string;
   /** Defaults to read-only. Use workspace-write only for an explicitly scoped cwd. */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -113,6 +119,11 @@ interface DelegatedTask {
   turnId?: string;
   spoke: boolean;
   contaminated: boolean;
+}
+
+interface NativeHandoffRedirect {
+  transcript: string;
+  retry: boolean;
 }
 
 const SPEAK_TOOL = "speak_to_user";
@@ -162,6 +173,8 @@ export class ChatGPTRealtimeAppServerSession {
   private activeTask?: DelegatedTask;
   private queuedTasks: DelegatedTask[] = [];
   private recentHandoffs = new Map<string, number>();
+  private recentNativeRedirects = new Map<string, number>();
+  private pendingNativeRedirect?: NativeHandoffRedirect;
   private speechTail: Promise<void> = Promise.resolve();
 
   constructor(options: ChatGPTRealtimeAppServerOptions) {
@@ -547,7 +560,14 @@ export class ChatGPTRealtimeAppServerSession {
       }
     } else if (method === "turn/started") {
       const turn = asRecord(params["turn"]);
-      if (this.activeTask && !this.activeTask.turnId && typeof turn?.["id"] === "string") {
+      if (this.pendingNativeRedirect && typeof turn?.["id"] === "string") {
+        const redirect = this.pendingNativeRedirect;
+        this.pendingNativeRedirect = undefined;
+        void this.completeNativeRedirect(turn["id"], redirect).catch(() => this.emit({
+          type: "error",
+          message: "The native GPT Live search retry failed.",
+        }));
+      } else if (this.activeTask && !this.activeTask.turnId && typeof turn?.["id"] === "string") {
         this.activeTask.turnId = turn["id"];
       }
     } else if (method === "turn/completed") {
@@ -573,6 +593,24 @@ export class ChatGPTRealtimeAppServerSession {
     const now = this.nowMs();
     for (const [key, seenAt] of this.recentHandoffs) {
       if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentHandoffs.delete(key);
+    }
+    for (const [key, seenAt] of this.recentNativeRedirects) {
+      if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentNativeRedirects.delete(key);
+    }
+    if (this.options.routeHandoff?.(transcript) === "native") {
+      const redirectKey = nativeRedirectKey(transcript);
+      const retry = !this.recentNativeRedirects.has(redirectKey);
+      this.recentNativeRedirects.set(redirectKey, now);
+      this.emit({ type: "handoff.redirected", transcript, destination: "native" });
+      if (this.activeTask) {
+        void this.retryNativeHandoff(transcript, retry).catch(() => this.emit({
+          type: "error",
+          message: "The native GPT Live search retry failed.",
+        }));
+      } else {
+        this.pendingNativeRedirect = { transcript, retry };
+      }
+      return;
     }
     if (
       this.activeTask?.normalizedTranscript === normalizedTranscript
@@ -631,6 +669,40 @@ export class ChatGPTRealtimeAppServerSession {
       type: "error",
       message: "Codex started, but its spoken acknowledgement failed.",
     }));
+  }
+
+  private async completeNativeRedirect(
+    turnId: string,
+    redirect: NativeHandoffRedirect,
+  ): Promise<void> {
+    if (!this.threadId) return;
+    await this.expectResult("turn/interrupt", {
+      threadId: this.threadId,
+      turnId,
+    }, 5_000);
+    await this.retryNativeHandoff(redirect.transcript, redirect.retry);
+  }
+
+  private async retryNativeHandoff(transcript: string, retry: boolean): Promise<void> {
+    if (!this.threadId) return;
+    if (!retry) {
+      await this.speak(
+        "Native web search isn’t available in this Live session, so I did not send that request to Codex.",
+      );
+      return;
+    }
+    await this.expectResult("thread/realtime/appendText", {
+      threadId: this.threadId,
+      role: "developer",
+      text:
+        "Routing correction: the immediately preceding request is native-only. Do not create a delegation. " +
+        "Use GPT Live's first-party web search or current-information capability and answer it directly now.",
+    }, 5_000);
+    await this.expectResult("thread/realtime/appendText", {
+      threadId: this.threadId,
+      role: "user",
+      text: `Native-only retry. Do not delegate to Codex: ${stripWakeWord(transcript)}`,
+    }, 5_000);
   }
 
   private async handleTurnCompleted(params: JsonObject): Promise<void> {
@@ -803,6 +875,19 @@ export class ChatGPTRealtimeAppServerSession {
 
 function normalizeTranscript(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function stripWakeWord(value: string): string {
+  return value.replace(/^\s*juniper\s*[,;:.-]?\s*/i, "").trim();
+}
+
+function nativeRedirectKey(value: string): string {
+  return normalizeTranscript(
+    stripWakeWord(value).replace(
+      /^native-only retry\.\s*do not delegate to codex:\s*/i,
+      "",
+    ),
+  );
 }
 
 function handoffContext(item: JsonObject): string | undefined {

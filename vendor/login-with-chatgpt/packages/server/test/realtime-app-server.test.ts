@@ -154,6 +154,54 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(speech).toEqual(["Codex started. You can keep talking while it works."]);
   });
 
+  test("interrupts simple native-only handoffs and retries them without starting Codex", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      handoffAcknowledgement: "Codex started.",
+      routeHandoff: (transcript) => transcript.includes("search the web") ? "native" : "codex",
+      now: () => 1_000,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).threadId = "thread_1";
+    (session as any).speak = async (text: string) => speech.push(text);
+    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params });
+      return { result: {} };
+    };
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Juniper, search the web for today's OpenHome news",
+      },
+    });
+    (session as any).handleNotification("turn/started", { turn: { id: "turn_search" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(events).toContainEqual({
+      type: "handoff.redirected",
+      transcript: "Juniper, search the web for today's OpenHome news",
+      destination: "native",
+    });
+    expect(events.some((event) => event.type === "handoff.started")).toBe(false);
+    expect(speech).toEqual([]);
+    expect(requests.map((request) => request.method)).toEqual([
+      "turn/interrupt",
+      "thread/realtime/appendText",
+      "thread/realtime/appendText",
+    ]);
+    expect(requests[0]?.params).toEqual({ threadId: "thread_1", turnId: "turn_search" });
+    expect(requests[2]?.params).toMatchObject({
+      role: "user",
+      text: "Native-only retry. Do not delegate to Codex: search the web for today's OpenHome news",
+    });
+  });
+
   test("queues overlapping handoffs, deduplicates retries, and isolates the next turn", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];

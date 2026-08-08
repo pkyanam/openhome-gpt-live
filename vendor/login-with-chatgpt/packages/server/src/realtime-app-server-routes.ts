@@ -70,6 +70,8 @@ export interface RealtimeAppServerPolicy {
   realtimePrompt?: string;
   /** Spoken when the automatic Codex execution handoff has started. */
   handoffAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Routes native-only requests away from the automatic Codex turn. */
+  routeHandoff?: (transcript: string) => "codex" | "native";
   /** Directory exposed to the delegated Codex thread. */
   cwd?: string;
   /** Defaults to read-only. `workspace-write` confines mutations to `cwd`. */
@@ -215,6 +217,7 @@ export function createRealtimeAppServerRoutes(options: {
         ...(policy.handoffAcknowledgement
           ? { handoffAcknowledgement: policy.handoffAcknowledgement }
           : {}),
+        ...(policy.routeHandoff ? { routeHandoff: policy.routeHandoff } : {}),
         ...(policy.cwd ? { cwd: policy.cwd } : {}),
         ...(policy.sandbox ? { sandbox: policy.sandbox } : {}),
       };
