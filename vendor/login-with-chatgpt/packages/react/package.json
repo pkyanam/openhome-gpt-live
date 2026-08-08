@@ -1,0 +1,57 @@
+{
+  "name": "@opencoredev/loginwithchatgpt-react",
+  "version": "0.2.0",
+  "description": "React hook and <LoginWithChatGPT /> button that drive the Login with ChatGPT device-code flow against your backend handler.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "bun test",
+    "prepublishOnly": "rm -rf dist && bun run build"
+  },
+  "dependencies": {
+    "@opencoredev/loginwithchatgpt-core": "^0.2.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "keywords": [
+    "chatgpt",
+    "openai",
+    "react",
+    "login",
+    "auth",
+    "button",
+    "hook"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opencoredev/login-with-chatgpt.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/opencoredev/login-with-chatgpt#readme",
+  "bugs": {
+    "url": "https://github.com/opencoredev/login-with-chatgpt/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

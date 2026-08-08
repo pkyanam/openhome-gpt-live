@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible OpenHome GPT Live problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste `.env`, device `config.json`, API keys, bearer tokens, pairing cookies, or tunnel credentials. Redact email addresses and public hostnames if desired.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware
+      options:
+        - Official OpenHome DevKit
+        - Raspberry Pi with OpenHome OS
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: OpenHome firmware
+      placeholder: 1.0.8
+    validations:
+      required: true
+  - type: textarea
+    id: symptom
+    attributes:
+      label: What happened?
+      description: Include the exact spoken request, expected result, and observed result.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted doctor output
+      description: Run `bun run doctor -- --require-server`. Remove hostnames and account details.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Include only the relevant host or DevKit lines. Do not attach credential or config files.
+      render: text

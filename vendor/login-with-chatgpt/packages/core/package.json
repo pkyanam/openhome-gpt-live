@@ -1,0 +1,53 @@
+{
+  "name": "@opencoredev/loginwithchatgpt-core",
+  "version": "0.2.0",
+  "description": "Framework-agnostic Login with ChatGPT engine: OAuth, Codex responses, and experimental private WebRTC voice with native tool handoffs.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "bun test",
+    "prepublishOnly": "rm -rf dist && bun run build"
+  },
+  "keywords": [
+    "chatgpt",
+    "openai",
+    "oauth",
+    "codex",
+    "login",
+    "auth",
+    "device-code",
+    "webrtc",
+    "realtime"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opencoredev/login-with-chatgpt.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/opencoredev/login-with-chatgpt#readme",
+  "bugs": {
+    "url": "https://github.com/opencoredev/login-with-chatgpt/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

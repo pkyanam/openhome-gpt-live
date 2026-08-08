@@ -1,0 +1,323 @@
+import json
+import io
+import array
+import asyncio
+from contextlib import redirect_stdout
+from pathlib import Path
+import sys
+import tempfile
+import types
+import unittest
+
+try:
+    import httpx  # noqa: F401
+except ModuleNotFoundError:
+    # Pure protocol tests do not make HTTP calls; the DevKit installs httpx
+    # from requirements.txt before running the Ability.
+    sys.modules["httpx"] = types.ModuleType("httpx")
+
+import devkit_functions as live
+
+
+class DevKitProtocolTests(unittest.TestCase):
+    def test_decodes_direct_and_nested_realtime_events(self):
+        event = {"type": "state_update", "payload": {"new_state": "speaking"}}
+        nested = json.dumps({"type": "data_message", "data": json.dumps(event)})
+        self.assertEqual(live.decode_realtime_event(event), event)
+        self.assertEqual(live.decode_realtime_event(nested), event)
+        self.assertIsNone(live.decode_realtime_event("not-json"))
+        self.assertIsNone(live.decode_realtime_event({"missing": "type"}))
+
+    def test_selects_an_entitled_model(self):
+        self.assertEqual(live._choose_model(["one", "two"], "two"), "two")
+        self.assertEqual(live._choose_model(["one", "two"], "missing"), "one")
+        with self.assertRaisesRegex(RuntimeError, "no Codex models"):
+            live._choose_model([], "")
+
+    def test_requires_https_except_loopback(self):
+        self.assertEqual(live._validate_server_url("https://voice.example.test/"), "https://voice.example.test")
+        self.assertEqual(live._validate_server_url("http://127.0.0.1:3000"), "http://127.0.0.1:3000")
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            live._validate_server_url("http://192.168.1.20:3000")
+
+    def test_spoken_pairing_code_is_grouped(self):
+        response = live._setup_spoken_response(
+            {"pairingCode": "12345678", "setupUrl": "https://voice.example.test/setup"},
+            {"status": "pending"},
+        )
+        self.assertIn("1234, 5678", response)
+        self.assertIn("https://voice.example.test/setup", response)
+
+    def test_status_exposes_only_current_pairing_setup_values(self):
+        originals = (
+            live.CONFIG_FILE,
+            live.STATUS_FILE,
+            live.PID_FILE,
+            live._read_worker_pid,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            live.CONFIG_FILE = root / "config.json"
+            live.STATUS_FILE = root / "status.json"
+            live.PID_FILE = root / "worker.pid"
+            live.CONFIG_FILE.write_text(json.dumps({
+                "setup_url": "https://voice.example.test/setup",
+                "pairing_code": "12345678",
+                "pairing_issued_at": live.time.time(),
+            }))
+            live.STATUS_FILE.write_text(json.dumps({"state": "awaiting_chatgpt_auth"}))
+            live._read_worker_pid = lambda: None
+            output = io.StringIO()
+            try:
+                with redirect_stdout(output):
+                    live.live_status()
+            finally:
+                (
+                    live.CONFIG_FILE,
+                    live.STATUS_FILE,
+                    live.PID_FILE,
+                    live._read_worker_pid,
+                ) = originals
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"]["pairing_code"], "12345678")
+        self.assertEqual(payload["status"]["setup_url"], "https://voice.example.test/setup")
+
+    def test_boot_service_restarts_the_worker(self):
+        unit = live._service_unit_text()
+        self.assertIn("WantedBy=default.target", unit)
+        self.assertIn("Restart=always", unit)
+        self.assertIn("UMask=0077", unit)
+        self.assertIn("ExecStartPre=/bin/sleep 15", unit)
+        self.assertIn("devkit_functions.py _worker", unit)
+
+    def test_default_audio_uses_pipewire_echo_cancellation(self):
+        capture = live._capture_command("default")
+        playback = live._playback_command("default")
+        self.assertEqual(capture[0], "parec")
+        self.assertIn(f"--device={live.AEC_SOURCE}", capture)
+        self.assertEqual(playback[0], "paplay")
+        self.assertIn(f"--device={live.AEC_SINK}", playback)
+        self.assertIn("--latency-msec=200", playback)
+        self.assertEqual(live._capture_command("hw:1")[0], "arecord")
+        self.assertEqual(live._playback_command("hw:1")[0], "aplay")
+
+    def test_voicehat_capture_uses_the_right_channel(self):
+        stereo = array.array("h", [1, 10, 2, 20, 3, 30]).tobytes()
+        selected = array.array("h")
+        selected.frombytes(live._select_capture_audio(stereo, "default"))
+        self.assertEqual(selected.tolist(), [10, 20, 30])
+        self.assertEqual(live._select_capture_audio(stereo, "hw:1"), stereo)
+
+    def test_downsamples_wake_audio_to_sixteen_kilohertz(self):
+        source = array.array("h", [3, 6, 9, 12, 15, 18]).tobytes()
+        downsampled = array.array("h")
+        downsampled.frombytes(live._downsample_48k_to_16k(source))
+        self.assertEqual(downsampled.tolist(), [6, 15])
+
+    def test_refreshes_clock_through_authenticated_live_session(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+        class Client:
+            def __init__(self):
+                self.requests = []
+
+            async def post(self, path, json):
+                self.requests.append((path, json))
+                return Response()
+
+        client = Client()
+        refreshed = asyncio.run(live._refresh_clock_context(
+            client,
+            {"device_id": "dev_1"},
+            "live_1",
+        ))
+
+        self.assertTrue(refreshed)
+        self.assertEqual(client.requests, [(
+            "/api/device/dev_1/chatgpt/realtime/app-server/live_1/clock",
+            {},
+        )])
+
+    def test_returns_to_armed_mode_only_after_listening_timeout(self):
+        wake = {"active": True, "last_activity": 100.0, "idle_seconds": 30}
+        self.assertFalse(
+            live._should_return_to_wake_mode(wake, {"value": "speaking"}, now=200.0)
+        )
+        self.assertFalse(
+            live._should_return_to_wake_mode(wake, {"value": "listening"}, now=129.9)
+        )
+        self.assertTrue(
+            live._should_return_to_wake_mode(wake, {"value": "listening"}, now=130.0)
+        )
+
+    def test_requires_wake_word_after_each_completed_response(self):
+        self.assertTrue(
+            live._should_arm_after_response("speaking", "listening", barge_in=False)
+        )
+        self.assertTrue(
+            live._should_arm_after_response("thinking", "listening", barge_in=False)
+        )
+        self.assertFalse(
+            live._should_arm_after_response("speaking", "listening", barge_in=True)
+        )
+
+    def test_validates_wake_configuration(self):
+        self.assertEqual(live._validate_wake_phrase("  Hey   Juniper "), "hey juniper")
+        self.assertEqual(live._validate_active_idle_seconds("30"), 30)
+        with self.assertRaises(ValueError):
+            live._validate_wake_phrase("juniper!")
+        with self.assertRaises(ValueError):
+            live._validate_active_idle_seconds("5")
+
+    def test_wake_word_sends_native_barge_in_while_live_is_speaking(self):
+        class Channel:
+            readyState = "open"
+
+            def __init__(self):
+                self.messages = []
+
+            def send(self, message):
+                self.messages.append(message)
+
+        channel = Channel()
+        state = {
+            "value": "speaking",
+            "hot_frames": 0,
+            "last_interrupt": 0.0,
+        }
+        playback = {"cutoff": False, "barge_in": False}
+        loud_frame = array.array("h", [2_000] * live.AUDIO_SAMPLES).tobytes()
+        live._maybe_interrupt(
+            loud_frame,
+            state,
+            channel,
+            playback,
+            wake_word=True,
+        )
+
+        self.assertEqual(len(channel.messages), 1)
+        self.assertEqual(
+            live.decode_realtime_event(channel.messages[0]),
+            {"type": "action_request", "payload": {"action": "stop_speaking"}},
+        )
+        self.assertEqual(playback, {"cutoff": True, "barge_in": True})
+
+    def test_quiet_audio_does_not_interrupt(self):
+        class Channel:
+            readyState = "open"
+
+            def __init__(self):
+                self.messages = []
+
+            def send(self, message):
+                self.messages.append(message)
+
+        channel = Channel()
+        state = {
+            "value": "speaking",
+            "hot_frames": 0,
+            "last_interrupt": 0.0,
+        }
+        quiet_frame = array.array("h", [2] * live.AUDIO_SAMPLES).tobytes()
+        for _ in range(20):
+            live._maybe_interrupt(quiet_frame, state, channel)
+        self.assertEqual(channel.messages, [])
+
+    def test_volume_alone_does_not_barge_in_without_wake_word(self):
+        class Channel:
+            readyState = "open"
+
+            def __init__(self):
+                self.messages = []
+
+            def send(self, message):
+                self.messages.append(message)
+
+        now = live.time.monotonic()
+        channel = Channel()
+        state = {
+            "value": "listening",
+            "hot_frames": 0,
+            "last_interrupt": 0.0,
+        }
+        playback = {
+            "cutoff": False,
+            "barge_in": False,
+            "started_at": now - 1.0,
+            "playing_until": now + 1.0,
+        }
+        speech = array.array("h", [10] * live.AUDIO_SAMPLES).tobytes()
+        for _ in range(20):
+            live._maybe_interrupt(speech, state, channel, playback)
+        self.assertEqual(channel.messages, [])
+        self.assertFalse(playback["cutoff"])
+
+    def test_wake_word_immediately_interrupts_at_attenuated_volume(self):
+        class Channel:
+            readyState = "open"
+
+            def __init__(self):
+                self.messages = []
+
+            def send(self, message):
+                self.messages.append(message)
+
+        now = live.time.monotonic()
+        channel = Channel()
+        state = {
+            "value": "speaking",
+            "hot_frames": 0,
+            "last_interrupt": 0.0,
+        }
+        playback = {
+            "cutoff": False,
+            "barge_in": False,
+            "started_at": now - 1.0,
+            "playing_until": now + 1.0,
+        }
+        attenuated = array.array("h", [3] * live.AUDIO_SAMPLES).tobytes()
+        live._maybe_interrupt(
+            attenuated,
+            state,
+            channel,
+            playback,
+            wake_word=True,
+        )
+        self.assertEqual(len(channel.messages), 1)
+        self.assertTrue(playback["cutoff"])
+
+    def test_new_wake_does_not_cancel_next_turn_during_old_playback_tail(self):
+        class Channel:
+            readyState = "open"
+
+            def __init__(self):
+                self.messages = []
+
+            def send(self, message):
+                self.messages.append(message)
+
+        now = live.time.monotonic()
+        channel = Channel()
+        state = {
+            "value": "listening",
+            "hot_frames": 0,
+            "last_interrupt": 0.0,
+        }
+        playback = {
+            "cutoff": False,
+            "barge_in": False,
+            "playing_until": now + 0.2,
+        }
+        wake = array.array("h", [10] * live.AUDIO_SAMPLES).tobytes()
+
+        live._maybe_interrupt(wake, state, channel, playback, wake_word=True)
+
+        self.assertEqual(channel.messages, [])
+        self.assertFalse(playback["cutoff"])
+
+
+if __name__ == "__main__":
+    unittest.main()

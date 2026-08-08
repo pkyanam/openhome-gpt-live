@@ -1,0 +1,61 @@
+{
+  "name": "@opencoredev/loginwithchatgpt-server",
+  "version": "0.2.0",
+  "description": "Server handler for Login with ChatGPT: login, Codex responses, and experimental private WebRTC voice with server-owned tools.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./realtime-app-server": {
+      "bun": "./src/realtime-app-server.ts",
+      "types": "./dist/realtime-app-server.d.ts",
+      "import": "./dist/realtime-app-server.js",
+      "default": "./dist/realtime-app-server.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "bun test",
+    "prepublishOnly": "rm -rf dist && bun run build"
+  },
+  "dependencies": {
+    "@opencoredev/loginwithchatgpt-core": "^0.2.0"
+  },
+  "keywords": [
+    "chatgpt",
+    "openai",
+    "oauth",
+    "codex",
+    "login",
+    "auth",
+    "edge",
+    "serverless"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opencoredev/login-with-chatgpt.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/opencoredev/login-with-chatgpt#readme",
+  "bugs": {
+    "url": "https://github.com/opencoredev/login-with-chatgpt/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

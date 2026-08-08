@@ -1,0 +1,39 @@
+{
+  "name": "openhome-gpt-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Use ChatGPT GPT Live as the wake-word voice and Codex tool plane for an OpenHome DevKit.",
+  "type": "module",
+  "workspaces": [
+    "vendor/login-with-chatgpt/packages/*"
+  ],
+  "scripts": {
+    "dev": "bun --hot src/server.ts",
+    "start": "bun src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:ability": "python3 -m unittest discover -s openhome-ability/openhome-gpt-live -p 'test_*.py'",
+    "check": "bun run typecheck && bun test && bun run test:ability && bun run package:ability",
+    "package:ability": "bash scripts/package-ability.sh",
+    "setup": "bun scripts/setup.ts",
+    "doctor": "bun scripts/doctor.ts",
+    "service:install": "bun scripts/service.ts install",
+    "service:status": "bun scripts/service.ts status",
+    "service:uninstall": "bun scripts/service.ts uninstall",
+    "upload:ability": "bun scripts/upload-ability.ts",
+    "openhome:config": "bun scripts/show-openhome-config.ts"
+  },
+  "dependencies": {
+    "@opencoredev/loginwithchatgpt-core": "workspace:*",
+    "@opencoredev/loginwithchatgpt-react": "workspace:*",
+    "@opencoredev/loginwithchatgpt-server": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  }
+}
