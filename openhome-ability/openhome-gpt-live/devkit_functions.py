@@ -582,10 +582,11 @@ async def _run_live_session(client, config, model, stop_event):
                     _write_armed_status(config, model, wake_state["phrase"])
         elif _event_marks_assistant_response(event):
             wake_state["assistant_response_seen"] = True
-        elif _is_completed_assistant_turn(event):
-            # Compatibility boundary for bridges that expose an explicit
-            # completed turn instead of a final ready-state transition.
-            input_track.arm_for_next_request("the completed assistant turn")
+        elif _handle_completed_assistant_turn(
+            event,
+            playback_control,
+            input_track.arm_for_next_request,
+        ):
             _write_armed_status(config, model, wake_state["phrase"])
         elif event.get("type") in ("goodbye", "close_ready"):
             connection_closed.set()
@@ -769,6 +770,17 @@ def _is_completed_assistant_turn(event):
         return False
     turn = event.get("turn")
     return isinstance(turn, dict) and turn.get("role") == "assistant"
+
+
+def _handle_completed_assistant_turn(event, playback_control, arm_for_next_request):
+    """Re-arm at an explicit turn boundary unless a replacement turn is open."""
+    if (
+        not _is_completed_assistant_turn(event)
+        or playback_control.get("barge_in", False)
+    ):
+        return False
+    arm_for_next_request("the completed assistant turn")
+    return True
 
 
 async def _wait_for_ice_gathering(pc):

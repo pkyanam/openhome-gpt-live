@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5 - 2026-08-08
+
+- Preserve the open microphone gate and queued replacement request when the
+  interrupted assistant response emits a late completion event.
+- Add regression coverage for the explicit turn-completion/barge-in event order.
+
 ## 0.2.4 - 2026-08-08
 
 - Re-arm the local Juniper microphone gate after every GPT Live response across

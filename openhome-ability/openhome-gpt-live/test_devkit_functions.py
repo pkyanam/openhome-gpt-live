@@ -43,6 +43,31 @@ class DevKitProtocolTests(unittest.TestCase):
             "payload": {"new_state": "listening"},
         }))
 
+    def test_interrupted_turn_completion_keeps_replacement_request_open(self):
+        event = {
+            "type": "turn.done",
+            "turn": {"role": "assistant", "transcript": "Interrupted."},
+        }
+        arm_calls = []
+
+        handled = live._handle_completed_assistant_turn(
+            event,
+            {"barge_in": True},
+            arm_calls.append,
+        )
+
+        self.assertFalse(handled)
+        self.assertEqual(arm_calls, [])
+
+        handled = live._handle_completed_assistant_turn(
+            event,
+            {"barge_in": False},
+            arm_calls.append,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(arm_calls, ["the completed assistant turn"])
+
     def test_selects_an_entitled_model(self):
         self.assertEqual(live._choose_model(["one", "two"], "two"), "two")
         self.assertEqual(live._choose_model(["one", "two"], "missing"), "one")
