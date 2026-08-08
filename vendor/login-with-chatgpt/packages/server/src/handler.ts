@@ -32,6 +32,7 @@ import { readTextBody } from "./request-body.ts";
 export type {
   RealtimeAppServerConfirmationContext,
   RealtimeAppServerPolicy,
+  RealtimeAppServerSearchContext,
   RealtimeAppServerSessionHandle,
   RealtimeAppServerToolContext,
 } from "./realtime-app-server-routes.ts";

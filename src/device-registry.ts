@@ -39,6 +39,8 @@ export interface DeviceRecord {
   codexQueueDepth?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
+  lastVoiceRoute?: "native" | "openai_search" | "codex";
+  lastVoiceRouteAt?: number;
   pendingConfirmations: PendingDeviceConfirmation[];
   lastError?: string;
   createdAt: number;
@@ -68,6 +70,8 @@ export interface PublicDeviceSession {
   codexQueueDepth?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
+  lastVoiceRoute?: "native" | "openai_search" | "codex";
+  lastVoiceRouteAt?: number;
   pendingConfirmations: PendingDeviceConfirmation[];
   lastError?: string;
   lastSeenAt: number;
@@ -85,9 +89,15 @@ export class DeviceRegistry {
   async register(
     name: string,
     resume?: { deviceId: string; deviceToken: string },
+    initialVoice = "vale",
   ): Promise<DeviceRegistration> {
     if (resume) {
-      const existing = await this.authenticateDevice(resume.deviceId, resume.deviceToken);
+      let existing = await this.authenticateDevice(resume.deviceId, resume.deviceToken);
+      if (!existing.voice) {
+        existing = await this.update(existing.id, (record) => {
+          record.voice = initialVoice;
+        });
+      }
       const pairing = existing.claimTokenHash ? undefined : await this.issuePairing(existing.id);
       return {
         record: (await this.get(existing.id))!,
@@ -103,6 +113,7 @@ export class DeviceRegistry {
       name: normalizeName(name),
       deviceTokenHash: this.hash("device", deviceToken),
       loginStatus: "unauthenticated",
+      voice: initialVoice,
       pendingConfirmations: [],
       createdAt: this.now(),
       lastSeenAt: this.now(),
@@ -207,10 +218,22 @@ export class DeviceRegistry {
           record.pendingConfirmations = [];
           break;
         case "handoff.started":
+          record.lastVoiceRoute = "codex";
+          record.lastVoiceRouteAt = this.now();
           record.codexState = "working";
           if (event["queued"] === true) {
             record.codexQueueDepth = Math.max(0, (record.codexQueueDepth ?? 0) - 1);
           }
+          break;
+        case "handoff.redirected":
+          if (event["destination"] === "native") {
+            record.lastVoiceRoute = "native";
+            record.lastVoiceRouteAt = this.now();
+          }
+          break;
+        case "search.started":
+          record.lastVoiceRoute = "openai_search";
+          record.lastVoiceRouteAt = this.now();
           break;
         case "handoff.queued":
           record.codexState = "working";
@@ -273,6 +296,8 @@ export class DeviceRegistry {
       ...(record.codexQueueDepth !== undefined ? { codexQueueDepth: record.codexQueueDepth } : {}),
       ...(record.lastCodexTaskStatus ? { lastCodexTaskStatus: record.lastCodexTaskStatus } : {}),
       ...(record.lastCodexTaskAt !== undefined ? { lastCodexTaskAt: record.lastCodexTaskAt } : {}),
+      ...(record.lastVoiceRoute ? { lastVoiceRoute: record.lastVoiceRoute } : {}),
+      ...(record.lastVoiceRouteAt !== undefined ? { lastVoiceRouteAt: record.lastVoiceRouteAt } : {}),
       pendingConfirmations: structuredClone(record.pendingConfirmations),
       ...(record.lastError ? { lastError: record.lastError } : {}),
       lastSeenAt: record.lastSeenAt,

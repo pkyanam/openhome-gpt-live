@@ -14,8 +14,9 @@ afterEach(async () => {
 describe("DeviceRegistry", () => {
   test("registers, resumes, pairs, and authenticates without storing raw secrets", async () => {
     const { registry, store } = await createRegistry();
-    const registration = await registry.register(" Kitchen DevKit ");
+    const registration = await registry.register(" Kitchen DevKit ", undefined, "vale");
     expect(registration.record.name).toBe("Kitchen DevKit");
+    expect(registration.record.voice).toBe("vale");
     expect(registration.pairingCode).toMatch(/^\d{8}$/);
 
     const stored = await store.get(registration.record.id);
@@ -30,9 +31,10 @@ describe("DeviceRegistry", () => {
     const resumed = await registry.register("ignored", {
       deviceId: registration.record.id,
       deviceToken: registration.deviceToken,
-    });
+    }, "juniper");
     expect(resumed.record.id).toBe(registration.record.id);
     expect(resumed.pairingCode).toBeUndefined();
+    expect(resumed.record.voice).toBe("vale");
   });
 
   test("serializes simultaneous record updates", async () => {
@@ -84,14 +86,27 @@ describe("DeviceRegistry", () => {
       transcript: "another private request",
       queued: true,
     });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "handoff.redirected",
+      transcript: "private native search",
+      destination: "native",
+    });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "search.started",
+      taskId: "search-1",
+      transcript: "private search request",
+    });
 
     const record = await store.get(registration.record.id);
     expect(record).toMatchObject({
       codexState: "working",
       codexQueueDepth: 0,
       lastCodexTaskStatus: "completed",
+      lastVoiceRoute: "openai_search",
     });
     expect(JSON.stringify(record)).not.toContain("private spoken request");
+    expect(JSON.stringify(record)).not.toContain("private native search");
+    expect(JSON.stringify(record)).not.toContain("private search request");
   });
 });
 

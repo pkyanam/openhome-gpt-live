@@ -117,7 +117,7 @@ class OpenHomeGPTLiveBackgroundCapability(MatchingCapability):
             server_url,
             bootstrap_token,
             self.capability_worker.get_api_keys("openhome_gpt_live_model") or "",
-            self.capability_worker.get_api_keys("openhome_gpt_live_voice") or "juniper",
+            self.capability_worker.get_api_keys("openhome_gpt_live_voice") or "vale",
             self.capability_worker.get_api_keys("openhome_gpt_live_capture_device") or "default",
             self.capability_worker.get_api_keys("openhome_gpt_live_playback_device") or "default",
             self.capability_worker.get_api_keys("openhome_gpt_live_wake_phrase") or "juniper",

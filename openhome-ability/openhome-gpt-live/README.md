@@ -1,62 +1,60 @@
-# OpenHome GPT Live Background Local Ability
+# OpenHome GPT Live Local Ability
 
-This package makes GPT Live the automatically active speech-to-speech plane for
-an OpenHome DevKit. `main.py` supplies the Local Ability's required cloud
-entrypoint, while `background.py` starts with the Personality session,
-launches the headless DevKit worker, monitors it, and reconnects expired or
-failed sessions. The offline `Juniper` wake phrase opens GPT Live; microphone
-audio is replaced with silence on the WebRTC connection while armed.
+This package makes GPT Live the background speech-to-speech provider for an
+OpenHome DevKit. `main.py` is the required interactive diagnostics entrypoint.
+`background.py` starts with the Personality session, configures the headless
+worker, monitors it, and restarts failed or expired sessions.
 
-After the first successful configuration, the DevKit installs a per-user
-`openhome-gpt-live.service`. It starts GPT Live after a power cycle and restarts
-a completed or interrupted Live session automatically.
+PocketSphinx detects the `Juniper` wake phrase locally. While armed, the
+WebRTC microphone track contains silence. Real microphone audio is forwarded
+only after the wake phrase, and the worker re-arms after each completed answer.
+Every new request and interruption requires `Juniper`.
 
-The default worker captures the VoiceHAT's useful right channel and routes
-capture/playback through PipeWire WebRTC acoustic echo cancellation. It uses
-`aiortc` for the merged login-with-chatgpt WebRTC protocol. No Chromium, screen,
-keyboard, or mouse is required.
+The default official-DevKit path selects the VoiceHAT's useful capture channel
+and uses PipeWire WebRTC acoustic echo cancellation. `aiortc` carries audio for
+the Login with ChatGPT app-server Realtime session. The DevKit needs no browser,
+screen, keyboard, or mouse.
 
-Create a **Local** Ability, upload all files, and preserve the registration
-marker in `background.py`. The Ability itself stays background-enabled; its
-DevKit worker owns wake-phrase gating.
+## Required Third Party Keys
 
-Declare these required Ability API-key fields:
-
-- `openhome_gpt_live_server_url` — public HTTPS origin of the Bun service.
-- `openhome_gpt_live_bootstrap_token` — same value as the server's
+- `openhome_gpt_live_server_url` — stable public HTTPS origin of the host.
+- `openhome_gpt_live_bootstrap_token` — same value as host
   `DEVKIT_BOOTSTRAP_TOKEN`.
 
-Optional fields:
+## Optional Third Party Keys
 
-- `openhome_gpt_live_model` — exact account model slug; otherwise account
-  discovery chooses the first result.
-- `openhome_gpt_live_voice` — defaults to `juniper`.
-- `openhome_gpt_live_capture_device` — ALSA source, defaults to `default`.
-- `openhome_gpt_live_playback_device` — ALSA sink, defaults to `default`.
-- `openhome_gpt_live_wake_phrase` — defaults to `juniper`.
-- `openhome_gpt_live_awake_timeout_seconds` — 30-second safety timeout for a
-  request that never completes.
+- `openhome_gpt_live_model` — exact entitled Codex model slug; otherwise the
+  first discovered model is used.
+- `openhome_gpt_live_voice` — initial voice for a newly enrolled device;
+  defaults to `vale`. After pairing, use the `/setup` phone picker.
+- `openhome_gpt_live_capture_device` — ALSA source, default `default`.
+- `openhome_gpt_live_playback_device` — ALSA sink, default `default`.
+- `openhome_gpt_live_wake_phrase` — default `juniper`.
+- `openhome_gpt_live_awake_timeout_seconds` — safety timeout for a request that
+  never completes; default 30 seconds.
 
-Say `Juniper` before every request. The worker returns to armed mode immediately
-after each completed answer. A mid-answer barge-in remains active long enough
-to capture the interrupted replacement request.
+Supported GPT Live voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
+Spruce, and Vale. Speaking voice and wake phrase are independent. A phone voice
+change closes the current Live transport; the DevKit worker reads the new
+server-owned setting when it reconnects.
 
-OpenHome's public Ability SDK runs Background/Local audio in parallel with its
-built-in STT/TTS pipeline; it does not expose a provider registration hook. To
-prevent two assistants from answering, enable the Agent's built-in wake word
-and set it to a reserved recovery phrase such as `openhome fallback seven nine`.
-Save and restart the Agent. GPT Live remains active independently; the reserved
-phrase is only for intentionally reaching the fallback Personality.
+## First pairing
 
-On first automatic start the DevKit announces the service setup URL and an
-eight-digit pairing code. Open the URL on a phone, enter the code, and complete
-ChatGPT authorization. The phone remains the approval surface for consequential
-OpenHome tools.
+After registration, the DevKit may announce the setup URL and eight-digit code.
+Audio is optional: on the host, `bun run pairing:code -- --wait=180` prints the
+same short-lived code and a one-click setup link. Pair the phone there and
+complete ChatGPT device authorization.
 
-If the default audio device fails, invoke `audio_devices` from the Ability
-editor and configure the exact ALSA capture/playback names. Disable this Ability
-and restart/sync the Agent to stop the GPT Live worker.
+## OpenHome fallback voice
 
-The required interactive trigger `gpt live diagnostics` is only a recovery
-check. It reads whether the local worker is running and speaks its current
-state; normal GPT Live requests always start with the offline wake phrase.
+The public Ability SDK does not expose a provider-registration hook, so the
+built-in OpenHome STT/TTS pipeline exists in parallel. Enable the built-in Agent
+wake word and change it to a reserved recovery phrase such as `openhome fallback
+seven nine`. GPT Live continues to use the offline Juniper gate.
+
+The required trigger phrase `gpt live diagnostics` is only a recovery check. It
+reports whether the worker runs; normal conversation never uses that trigger.
+
+Disable the Ability and restart the Agent to stop the provider. If default
+audio fails, invoke `audio_devices` in the Ability editor and configure the
+exact capture/playback device names.

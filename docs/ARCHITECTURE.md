@@ -2,70 +2,115 @@
 
 ```text
 OpenHome DevKit
-  offline wake word + microphone + speaker
-          │ authenticated WebRTC signaling and audio
+  PocketSphinx wake word
+  PipeWire echo cancellation
+  aiortc microphone + speaker
+          │ authenticated SDP through the host
+          │ direct WebRTC media after negotiation
           ▼
-Long-lived Bun bridge on the owner's computer
-  Login with ChatGPT session store
-  device enrollment and phone pairing
-  allowlisted OpenHome tools
-          │ native GPT Live + handoff requests
+ChatGPT GPT Live
+          │ structured handoff_request
           ▼
-ChatGPT subscription / Codex app-server
-          │ scoped workspace or owner-selected host access
-          ▼
-Files, tests, OpenHome account actions, and spoken results
+Login with ChatGPT app-server bridge on the owner's computer
+          ├── ordinary conversation ───────────────► GPT Live
+          ├── current information ─────────────────► OpenAI web_search
+          └── files / apps / actions ──────────────► Codex
+                                                        │
+                                                        ▼
+                                                  appendSpeech result
 
 Phone /setup page
-  ChatGPT device authorization + consequential-action approvals
+  one-time DevKit pairing
+  ChatGPT device authorization
+  GPT Live voice selection
+  consequential-action approvals
 ```
 
 ## DevKit plane
 
-The uploaded archive has exactly one root directory and contains the required
-`__init__.py`, `main.py`, `background.py`, `devkit_functions.py`,
-`requirements.txt`, and README.
+The Ability ZIP contains one `openhome-gpt-live/` root with `__init__.py`,
+`main.py`, `background.py`, `devkit_functions.py`, `requirements.txt`, and its
+README. `background.py` starts with the OpenHome Personality session and keeps
+the DevKit worker running. Where systemd is available, the worker also installs
+a per-user service so it returns after a power cycle.
 
-`background.py` starts automatically with the OpenHome Personality session and
-monitors the device worker. `devkit_functions.py` installs a persistent user
-service when systemd is present, creates the WebRTC connection with `aiortc`,
-and handles audio. PocketSphinx hears the wake phrase locally. While armed, the
-WebRTC input track is silence; after “Juniper,” real microphone frames are
-forwarded until the response completes.
+PocketSphinx detects the configured wake phrase locally. While armed, the
+WebRTC microphone track contains silence. After “Juniper,” the worker forwards
+real microphone frames until the assistant turn completes, then re-arms. Every
+new request and mid-answer interruption requires the wake phrase.
 
-The default official-DevKit path creates a PipeWire-Pulse
-`module-echo-cancel` source/sink, sends the cleaned microphone channel to GPT
-Live, and plays returned audio through the paired virtual sink. Barge-in first
-mutes local playback and sends GPT Live's stop-speaking action.
+The official DevKit path creates a PipeWire-Pulse `module-echo-cancel`
+source/sink. The cleaned capture channel goes to GPT Live and remote audio plays
+through the paired virtual sink. Barge-in cuts local playback immediately and
+sends the native stop-speaking action.
 
-## Host plane
+## Host and Login with ChatGPT
 
-The Bun process must be long lived; request-isolated serverless functions
-cannot hold the Codex app-server subprocess or event stream. It stores encrypted
-Login with ChatGPT sessions and hashed/opaque device credentials in `data/`.
-The DevKit never receives ChatGPT bearer tokens or the OpenHome API key.
+The Bun bridge must remain running. It stores encrypted Login with ChatGPT
+sessions, hashed device credentials, and phone pairing state under `data/`.
+ChatGPT bearer/refresh material and the OpenHome API key never go to the DevKit
+or phone.
 
-The bridge binds a device to a phone pairing cookie. The phone completes
-ChatGPT's device authorization and displays pending consequential actions.
-Each native Live session is bound to the authenticated login session.
+The DevKit sends an SDP offer to the authenticated app-server Realtime route.
+The vendored SDK starts an isolated Codex app-server process with the signed-in
+ChatGPT subscription, calls `thread/realtime/start`, and returns the SDP answer.
+The app-server mediates structured handoffs and appended speech; the WebRTC
+media plane remains between the DevKit and ChatGPT.
 
-## Tool plane
+This is intentionally not the standalone direct `/realtime/wm` proxy. The
+app-server route is what provides reliable `handoff_request`, interruption,
+background execution, and `appendSpeech` behavior without scraping raw data
+channel transcripts or capturing ChatGPT browser cookies.
 
-GPT Live handles speech, ordinary conversation, current web search, and general
-knowledge natively. Requests needing files or host actions become Codex
-handoffs. The bridge supplies server-owned tool schemas; neither the browser
-nor the DevKit can inject tools.
+## Routing and tool planes
 
-OpenHome mutations use a prepare/review/confirm flow. Workspace-only Codex runs
-in `workspace-write`. Phone-confirmed host tasks start a separate
-`danger-full-access` execution only after approval. Full Access configures the
-delegated realtime thread itself as `danger-full-access` with approval policy
-`never`.
+The host classifies every native handoff before Codex accepts it:
+
+- Clock questions return to GPT Live, which receives a fresh owner-local clock
+  context for every wake request.
+- Explicit/current web requests call the authenticated ChatGPT Responses
+  endpoint with `tools: [{ type: "web_search" }]`. The parser rejects a result
+  unless response usage proves that web search actually ran.
+- File, workspace, application, OpenHome, external-action, and explicit “use
+  Codex” requests enter the delegated Codex lane. A local action wins when a
+  request contains both research and a mutation.
+
+The automatically created Codex search turn is interrupted before execution.
+The search lane acknowledges immediately, runs independently, and sends its
+speech-friendly result through `thread/realtime/appendSpeech`. It never invokes
+local Codex.
+
+Codex work is serialized, deduplicated, and isolated into individual turns.
+The bridge acknowledges accepted work, publishes busy/queue state to GPT Live,
+and guarantees a spoken completion fallback if the execution agent omits its
+own `speak_to_user` call.
+
+OpenHome mutations use prepare/review/confirm. Workspace-only Codex uses
+`workspace-write`. Phone-confirmed host actions run outside the workspace only
+after `/setup` approval. Full Access deliberately uses `danger-full-access`
+with approval policy `never`.
+
+## Pairing and voice settings
+
+Device enrollment returns an eight-digit pairing code valid for 15 minutes.
+Only its hash is stored in the device registry. A separate mode-0600 local
+inbox retains the raw code for `bun run pairing:code`; it is removed on claim or
+expiry. The helper prints a one-click `/setup#pairing=…` link, so speaker audio
+and log access are optional.
+
+The phone receives a distinct HttpOnly pairing cookie. It can complete ChatGPT
+device authorization, approve pending actions, and select one of the SDK's nine
+known GPT Live voices. A voice change updates server-owned device settings and
+closes the current Live session. The DevKit watchdog reconnects, reads the new
+setting through its device credential, and negotiates the new voice. Wake phrase
+configuration remains independent.
 
 ## Lifecycle
 
 - Host launchd/systemd restarts the Bun bridge after failure or reboot.
-- DevKit systemd/watchdog restarts its worker after failure or reboot.
-- GPT Live transports rotate after 30 minutes and reconnect automatically.
-- A fresh authenticated host clock is injected for each wake request.
+- DevKit systemd/OpenHome monitoring restarts the audio worker.
+- GPT Live sessions rotate after 30 minutes and reconnect automatically.
+- A fresh owner-local clock context is injected for every wake request.
 - Disabling the Ability and restarting the Agent stops the provider.
+- A stable HTTPS hostname is required; a changing tunnel URL strands the
+  DevKit on its old server address.

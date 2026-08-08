@@ -90,5 +90,7 @@ bun run openhome:config
 say ""
 say "Local installation is complete."
 say "Finish the short OpenHome dashboard checklist printed above and in:"
-say "  https://github.com/pkyanam/openhome-gpt-live#finish-in-openhome"
+say "  https://github.com/pkyanam/openhome-gpt-live#finish-setup-in-openhome"
+say "After Sync Abilities and Restart Agent, retrieve the pairing link with:"
+say "  cd $install_root && bun run pairing:code -- --wait=180"
 say ""

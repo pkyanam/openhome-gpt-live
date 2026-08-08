@@ -18,6 +18,10 @@ ChatGPT, OpenHome, tunnel, or DevKit credentials.
   worker state. The enrollment token is not copied into that worker config.
 - The phone stores a distinct HttpOnly pairing cookie. It never receives
   ChatGPT bearer tokens or DevKit credentials.
+- The raw eight-digit device pairing code is kept in a separate mode-0600 host
+  inbox only so `bun run pairing:code` can display it. It expires after 15
+  minutes and is removed immediately after a successful claim. The device
+  registry itself stores only the code hash.
 - Tool names and JSON schemas are defined by the server. Model, browser, and
   device inputs are revalidated at the execution boundary.
 - Public deployments are bound to one configured ChatGPT email.

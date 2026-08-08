@@ -4,11 +4,13 @@ import {
   serializeCookie,
   type ChatGPTHandler,
 } from "@opencoredev/loginwithchatgpt-server";
+import { CHATGPT_REALTIME_VOICES } from "@opencoredev/loginwithchatgpt-core";
 import {
   DeviceRegistry,
   pairingCookieValue,
   type DeviceRecord,
 } from "./device-registry.ts";
+import type { PairingCodeStore } from "./pairing-code-store.ts";
 
 const PAIRING_COOKIE = "ohgpt_pairing";
 const MAX_JSON_BODY_BYTES = 512 * 1024;
@@ -21,6 +23,7 @@ export interface DeviceRoutesOptions {
   registry: DeviceRegistry;
   bootstrapToken: string;
   publicBaseUrl?: string;
+  pairingCodes?: PairingCodeStore;
 }
 
 export function createDeviceRoutes(options: DeviceRoutesOptions) {
@@ -37,14 +40,24 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
       const payload = await readJson(request);
       if (payload instanceof Response) return payload;
       const name = typeof payload["name"] === "string" ? payload["name"] : "OpenHome DevKit";
+      const initialVoice = normalizeVoice(payload["voice"] ?? "vale");
+      if (!initialVoice) return json({ error: "invalid_voice" }, { status: 400 });
       const deviceId = payload["deviceId"];
       const deviceToken = payload["deviceToken"];
       const resume = typeof deviceId === "string" && typeof deviceToken === "string"
         ? { deviceId, deviceToken }
         : undefined;
       try {
-        const registration = await options.registry.register(name, resume);
+        const registration = await options.registry.register(name, resume, initialVoice);
         const publicBaseUrl = resolvePublicBaseUrl(request, options.publicBaseUrl);
+        if (registration.pairingCode && options.pairingCodes) {
+          await options.pairingCodes.record({
+            deviceId: registration.record.id,
+            deviceName: registration.record.name,
+            code: registration.pairingCode,
+            setupUrl: `${publicBaseUrl}/setup`,
+          });
+        }
         return json({
           deviceId: registration.record.id,
           deviceToken: registration.deviceToken,
@@ -62,10 +75,27 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
       try {
         const record = await authenticateDeviceRequest(options.registry, resetMatch[1]!, request);
         const pairingCode = await options.registry.issuePairing(record.id);
+        const setupUrl = `${resolvePublicBaseUrl(request, options.publicBaseUrl)}/setup`;
+        await options.pairingCodes?.record({
+          deviceId: record.id,
+          deviceName: record.name,
+          code: pairingCode,
+          setupUrl,
+        });
         return json({
           pairingCode,
-          setupUrl: `${resolvePublicBaseUrl(request, options.publicBaseUrl)}/setup`,
+          setupUrl,
         });
+      } catch (error) {
+        return json({ error: "device_unauthorized", message: publicError(error) }, { status: 401 });
+      }
+    }
+
+    const settingsMatch = /^\/api\/device\/([^/]+)\/settings$/.exec(path);
+    if (settingsMatch && request.method === "GET") {
+      try {
+        const record = await authenticateDeviceRequest(options.registry, settingsMatch[1]!, request);
+        return json({ voice: normalizeVoice(record.voice) ?? "vale" });
       } catch (error) {
         return json({ error: "device_unauthorized", message: publicError(error) }, { status: 401 });
       }
@@ -92,6 +122,7 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
       if (payload instanceof Response) return payload;
       try {
         const { record, claimToken } = await options.registry.claim(String(payload["code"] ?? ""));
+        await options.pairingCodes?.remove(record.id);
         const headers = new Headers();
         headers.set("set-cookie", serializeCookie(
           PAIRING_COOKIE,
@@ -116,6 +147,46 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
         return json({ session: options.registry.publicSession(record) });
       } catch {
         return json({ error: "pairing_not_authenticated" }, { status: 401 });
+      }
+    }
+
+    if (path === "/api/pairing/voice" && request.method === "POST") {
+      try {
+        let record = await authenticatePairingRequest(options.registry, request);
+        const payload = await readJson(request);
+        if (payload instanceof Response) return payload;
+        const voice = normalizeVoice(payload["voice"]);
+        if (!voice) return json({ error: "invalid_voice" }, { status: 400 });
+        if (record.codexState === "working") {
+          return json({
+            error: "codex_task_active",
+            message: "Wait for the active Codex task before changing the GPT Live voice.",
+          }, { status: 409 });
+        }
+        const liveSessionId = record.liveSessionId;
+        record = await options.registry.update(record.id, (current) => {
+          current.voice = voice;
+        });
+        let reconnecting = false;
+        if (liveSessionId && record.lwcCookie) {
+          const closeResponse = await internalAuthRequest(options.auth, record, request, {
+            path: `/realtime/app-server/${encodeURIComponent(liveSessionId)}`,
+            method: "DELETE",
+          });
+          reconnecting = closeResponse.ok;
+          if (closeResponse.ok) {
+            record = await options.registry.update(record.id, (current) => {
+              delete current.liveSessionId;
+              current.connectionState = "closed";
+              current.codexState = "idle";
+              current.codexQueueDepth = 0;
+              current.pendingConfirmations = [];
+            });
+          }
+        }
+        return json({ session: options.registry.publicSession(record), reconnecting });
+      } catch (error) {
+        return json({ error: "voice_update_failed", message: publicError(error) }, { status: 400 });
       }
     }
 
@@ -388,6 +459,7 @@ async function authenticatePairingRequest(registry: DeviceRegistry, request: Req
 function isAllowedDeviceRoute(path: string, method: string): boolean {
   if (path === "/login") return method === "POST";
   if (path === "/status" || path === "/session" || path === "/models") return method === "GET";
+  if (path === "/realtime") return method === "POST";
   if (path === "/realtime/app-server") return method === "POST";
   if (/^\/realtime\/app-server\/[^/]+\/events$/.test(path)) return method === "GET";
   if (/^\/realtime\/app-server\/[^/]+\/clock$/.test(path)) return method === "POST";
@@ -455,6 +527,14 @@ function validSecret(actual: string | undefined, expected: string): boolean {
   const left = Buffer.from(actual);
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function normalizeVoice(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return (CHATGPT_REALTIME_VOICES as readonly string[]).includes(normalized)
+    ? normalized
+    : undefined;
 }
 
 function resolvePublicBaseUrl(request: Request, configured?: string): string {

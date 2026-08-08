@@ -14,5 +14,5 @@ console.log("Add these as Third Party Keys in OpenHome and link both to OpenHome
 console.log(`openhome_gpt_live_server_url\n${env.PUBLIC_BASE_URL}\n`);
 console.log(`openhome_gpt_live_bootstrap_token\n${env.DEVKIT_BOOTSTRAP_TOKEN}\n`);
 console.log("Optional defaults:");
-console.log("openhome_gpt_live_voice = juniper");
+console.log("openhome_gpt_live_voice = vale");
 console.log("openhome_gpt_live_wake_phrase = juniper");

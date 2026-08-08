@@ -34,6 +34,16 @@ export interface RealtimeAppServerConfirmationContext extends RealtimeAppServerT
   pending: RealtimeToolResult;
 }
 
+export interface RealtimeAppServerSearchContext {
+  /** Stable id of the authenticated Login with ChatGPT session. */
+  loginSessionId: string;
+  /** Opaque id of this Live call. */
+  liveSessionId: string;
+  /** Header-only snapshot of the authenticated session-creation request. */
+  request: Request;
+  transcript: string;
+}
+
 /** Minimal process/session contract required by the HTTP lifecycle manager. */
 export interface RealtimeAppServerSessionHandle {
   readonly id: string;
@@ -70,6 +80,12 @@ export interface RealtimeAppServerPolicy {
   realtimePrompt?: string;
   /** Spoken when the automatic Codex execution handoff has started. */
   handoffAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Runs a first-party OpenAI web search under the authenticated user. */
+  executeSearch?: (context: RealtimeAppServerSearchContext) => Promise<string>;
+  /** Spoken after the OpenAI search lane accepts a handoff. */
+  searchAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Routes requests away from the automatic Codex turn when appropriate. */
+  routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search";
   /** Directory exposed to the delegated Codex thread. */
   cwd?: string;
   /** Defaults to read-only. `workspace-write` confines mutations to `cwd`. */
@@ -215,6 +231,20 @@ export function createRealtimeAppServerRoutes(options: {
         ...(policy.handoffAcknowledgement
           ? { handoffAcknowledgement: policy.handoffAcknowledgement }
           : {}),
+        ...(policy.executeSearch
+          ? {
+              executeSearch: (transcript) => policy.executeSearch!({
+                loginSessionId: ownerSessionId,
+                liveSessionId,
+                request: requestSnapshot,
+                transcript,
+              }),
+            }
+          : {}),
+        ...(policy.searchAcknowledgement
+          ? { searchAcknowledgement: policy.searchAcknowledgement }
+          : {}),
+        ...(policy.routeHandoff ? { routeHandoff: policy.routeHandoff } : {}),
         ...(policy.cwd ? { cwd: policy.cwd } : {}),
         ...(policy.sandbox ? { sandbox: policy.sandbox } : {}),
       };
