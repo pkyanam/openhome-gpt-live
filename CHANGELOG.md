@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4 - 2026-08-08
+
+- Re-arm the local Juniper microphone gate after every GPT Live response across
+  all `/wm` ready-state transitions, not only `speaking -> listening`.
+- Clear buffered wake-detector audio at each turn boundary so stale audio cannot
+  silently reopen the microphone.
+- Preserve the same GPT Live WebRTC session while re-arming, retaining the full
+  conversation context between wake-word-gated requests.
+
 ## 0.2.3 - 2026-08-08
 
 - Replace phone-specific setup language with the accurate browser control-page

@@ -57,6 +57,7 @@ RECONNECT_MAX_SECONDS = 30.0
 WAKE_PREROLL_FRAMES = 25
 WAKE_KWS_THRESHOLD = 1e-25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
+GPT_LIVE_READY_STATES = {"idle", "connected", "listening", "listening_intently"}
 
 
 def configure_and_start(
@@ -372,6 +373,7 @@ async def _run_live_session(client, config, model, stop_event):
     }
     wake_state = {
         "active": False,
+        "assistant_response_seen": False,
         "last_activity": 0.0,
         "last_wake": 0.0,
         "phrase": config.get("wake_phrase", DEFAULT_WAKE_PHRASE),
@@ -404,6 +406,18 @@ async def _run_live_session(client, config, model, stop_event):
             self._process = _open_capture_process(device)
             if self._process.stdout is None:
                 raise RuntimeError("Could not open the microphone stream.")
+
+        def arm_for_next_request(self, reason):
+            """Close only the microphone gate; keep the GPT Live session alive."""
+            was_active = _reset_wake_gate(
+                wake_state,
+                playback_control,
+                self._pending,
+                self._preroll,
+                self._wake_detector,
+            )
+            if was_active:
+                log.info("GPT Live microphone re-armed after %s", reason)
 
         async def recv(self):
             if self._pending:
@@ -438,6 +452,7 @@ async def _run_live_session(client, config, model, stop_event):
                     if self._wake_detector.process(data):
                         now = time.monotonic()
                         wake_state["active"] = True
+                        wake_state["assistant_response_seen"] = False
                         wake_state["last_activity"] = now
                         wake_state["last_wake"] = now
                         self._pending.extend(self._preroll)
@@ -460,9 +475,7 @@ async def _run_live_session(client, config, model, stop_event):
                     else:
                         data = bytes(AUDIO_BYTES)
                 elif _should_return_to_wake_mode(wake_state, remote_state):
-                    wake_state["active"] = False
-                    self._pending.clear()
-                    self._preroll.clear()
+                    self.arm_for_next_request("the request timeout")
                     _write_armed_status(config, model, wake_state["phrase"])
                     data = bytes(AUDIO_BYTES)
                 else:
@@ -536,6 +549,7 @@ async def _run_live_session(client, config, model, stop_event):
                     remote_state["changed_at"] = time.monotonic()
                     log.info("GPT Live state changed: %s -> %s", previous_state, state)
                     if state == "speaking":
+                        wake_state["assistant_response_seen"] = True
                         # Discard the user's initial wake phrase and request
                         # audio before listening for a second Juniper used as
                         # barge-in. Without this reset, the very-low-threshold
@@ -545,10 +559,12 @@ async def _run_live_session(client, config, model, stop_event):
                 if state != "speaking":
                     playback_control["cutoff"] = False
                 if _should_arm_after_response(
-                    previous_state, state, playback_control["barge_in"]
+                    previous_state,
+                    state,
+                    playback_control["barge_in"],
+                    wake_state["assistant_response_seen"],
                 ):
-                    wake_state["active"] = False
-                    playback_control["barge_in"] = False
+                    input_track.arm_for_next_request("the assistant response")
                 elif state == "thinking":
                     # A locally detected interruption first moves Live back to
                     # listening. Keep that interrupted request open until the
@@ -564,16 +580,12 @@ async def _run_live_session(client, config, model, stop_event):
                     )
                 else:
                     _write_armed_status(config, model, wake_state["phrase"])
+        elif _event_marks_assistant_response(event):
+            wake_state["assistant_response_seen"] = True
         elif _is_completed_assistant_turn(event):
-            # State transitions are not guaranteed for speech appended by the
-            # Mac bridge. The transcript's completed assistant turn is the
-            # authoritative per-request boundary, so require Juniper again even
-            # when Live never emits speaking -> listening.
-            wake_state["active"] = False
-            playback_control["barge_in"] = False
-            input_track._pending.clear()
-            input_track._preroll.clear()
-            input_track._wake_detector.reset()
+            # Compatibility boundary for bridges that expose an explicit
+            # completed turn instead of a final ready-state transition.
+            input_track.arm_for_next_request("the completed assistant turn")
             _write_armed_status(config, model, wake_state["phrase"])
         elif event.get("type") in ("goodbye", "close_ready"):
             connection_closed.set()
@@ -1164,18 +1176,52 @@ def _downsample_48k_to_16k(data):
 
 
 def _should_return_to_wake_mode(wake_state, remote_state, now=None):
-    if not wake_state["active"] or remote_state["value"] != "listening":
+    if (
+        not wake_state["active"]
+        or remote_state["value"] not in GPT_LIVE_READY_STATES
+    ):
         return False
     now = time.monotonic() if now is None else now
     return now - wake_state["last_activity"] >= wake_state["idle_seconds"]
 
 
-def _should_arm_after_response(previous_state, state, barge_in):
+def _should_arm_after_response(
+    previous_state, state, barge_in, assistant_response_seen
+):
+    # `/wm` does not always return to the exact `listening` state. Treat every
+    # non-output ready state as the end of a response, but only after observing
+    # assistant output (or a thinking -> ready failure boundary). The WebRTC
+    # connection remains untouched so conversation context survives re-arming.
     return (
         not barge_in
-        and state == "listening"
-        and previous_state in ("speaking", "thinking")
+        and state in GPT_LIVE_READY_STATES
+        and (
+            assistant_response_seen
+            or previous_state in ("speaking", "thinking")
+        )
     )
+
+
+def _reset_wake_gate(
+    wake_state, playback_control, pending, preroll, wake_detector
+):
+    """Re-arm for Juniper without touching the persistent Live connection."""
+    was_active = wake_state["active"]
+    wake_state["active"] = False
+    wake_state["assistant_response_seen"] = False
+    playback_control["barge_in"] = False
+    pending.clear()
+    preroll.clear()
+    wake_detector.reset()
+    return was_active
+
+
+def _event_marks_assistant_response(event):
+    """Recognize assistant audio without depending on undocumented turn.done."""
+    return isinstance(event, dict) and event.get("type") in {
+        "live_captioning_text",
+        "speaking_update",
+    }
 
 
 def _write_armed_status(config, model, phrase):

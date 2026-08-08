@@ -2,6 +2,7 @@ import json
 import io
 import array
 import asyncio
+from collections import deque
 from contextlib import redirect_stdout
 from pathlib import Path
 import sys
@@ -267,17 +268,76 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertTrue(
             live._should_return_to_wake_mode(wake, {"value": "listening"}, now=130.0)
         )
+        self.assertTrue(
+            live._should_return_to_wake_mode(wake, {"value": "connected"}, now=130.0)
+        )
+
+    def test_rearming_closes_mic_and_clears_stale_wake_audio(self):
+        class Detector:
+            def __init__(self):
+                self.resets = 0
+
+            def reset(self):
+                self.resets += 1
+
+        wake = {"active": True, "assistant_response_seen": True}
+        playback = {"barge_in": True}
+        pending = deque([b"old request"])
+        preroll = deque([b"old speaker tail"])
+        detector = Detector()
+
+        was_active = live._reset_wake_gate(
+            wake, playback, pending, preroll, detector
+        )
+
+        self.assertTrue(was_active)
+        self.assertFalse(wake["active"])
+        self.assertFalse(wake["assistant_response_seen"])
+        self.assertFalse(playback["barge_in"])
+        self.assertEqual(list(pending), [])
+        self.assertEqual(list(preroll), [])
+        self.assertEqual(detector.resets, 1)
 
     def test_requires_wake_word_after_each_completed_response(self):
-        self.assertTrue(
-            live._should_arm_after_response("speaking", "listening", barge_in=False)
-        )
-        self.assertTrue(
-            live._should_arm_after_response("thinking", "listening", barge_in=False)
-        )
-        self.assertFalse(
-            live._should_arm_after_response("speaking", "listening", barge_in=True)
-        )
+        for ready_state in ("idle", "connected", "listening", "listening_intently"):
+            with self.subTest(ready_state=ready_state):
+                self.assertTrue(live._should_arm_after_response(
+                    "speaking",
+                    ready_state,
+                    barge_in=False,
+                    assistant_response_seen=True,
+                ))
+        self.assertTrue(live._should_arm_after_response(
+            "thinking",
+            "connected",
+            barge_in=False,
+            assistant_response_seen=False,
+        ))
+        self.assertFalse(live._should_arm_after_response(
+            "speaking",
+            "listening",
+            barge_in=True,
+            assistant_response_seen=True,
+        ))
+        self.assertFalse(live._should_arm_after_response(
+            "listening_intently",
+            "listening",
+            barge_in=False,
+            assistant_response_seen=False,
+        ))
+
+    def test_real_gpt_live_events_mark_assistant_output(self):
+        self.assertTrue(live._event_marks_assistant_response({
+            "type": "live_captioning_text",
+            "payload": {"text": "Hello"},
+        }))
+        self.assertTrue(live._event_marks_assistant_response({
+            "type": "speaking_update",
+        }))
+        self.assertFalse(live._event_marks_assistant_response({
+            "type": "user_transcription_text",
+            "payload": {"text": "Juniper"},
+        }))
 
     def test_validates_wake_configuration(self):
         self.assertEqual(live._validate_wake_phrase("  Hey   Juniper "), "hey juniper")
