@@ -119,7 +119,7 @@ normally within a few seconds. Confirm the selected voice remains visible.
 If it stays `closed`, the DevKit probably still has an Ability older than 0.2.1.
 In OpenHome, run **Sync Abilities**, then **Restart Agent** once. The optional
 `openhome_gpt_live_voice` Third Party Key is only an initial value; the paired
-phone selection is server-owned and wins after enrollment.
+phone selection is server-owned and is enforced on every Live negotiation.
 
 The supported voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
 Spruce, and Vale. Voice and wake phrase are independent.

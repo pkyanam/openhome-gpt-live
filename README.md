@@ -102,7 +102,9 @@ are:
 
 Vale is the default for new devices. Saving a different voice restarts only the
 Live connection. The page shows **reconnecting** and returns to **live**
-automatically, normally within a few seconds. The wake phrase is a
+automatically, normally within a few seconds. The saved phone choice is
+authoritative on every reconnect, even if the DevKit still has an older local
+fallback value. The wake phrase is a
 separate setting and remains **Juniper** unless you change the optional
 `openhome_gpt_live_wake_phrase` Third Party Key.
 

@@ -44,6 +44,7 @@ export function PairingApp() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [awaitingVoice, setAwaitingVoice] = useState<ChatGPTRealtimeVoice>();
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/pairing/session", { credentials: "include" });
@@ -80,6 +81,17 @@ export function PairingApp() {
   useEffect(() => {
     if (isRealtimeVoice(session?.voice)) setVoice(session.voice);
   }, [session?.voice]);
+
+  useEffect(() => {
+    if (
+      awaitingVoice
+      && session?.connectionState === "live"
+      && session.voice === awaitingVoice
+    ) {
+      setNotice(`${voiceLabel(awaitingVoice)} is live.`);
+      setAwaitingVoice(undefined);
+    }
+  }, [awaitingVoice, session?.connectionState, session?.voice]);
 
   async function claim(event: FormEvent) {
     event.preventDefault();
@@ -122,6 +134,7 @@ export function PairingApp() {
       };
       if (!response.ok || !payload.session) throw new Error(payload.message ?? "Voice update failed.");
       setSession(payload.session);
+      setAwaitingVoice(payload.reconnecting ? voice : undefined);
       setNotice(payload.reconnecting
         ? `${voiceLabel(voice)} saved. GPT Live is reconnecting automatically; this page will return to live.`
         : `${voiceLabel(voice)} saved. It will be used when GPT Live next connects.`);

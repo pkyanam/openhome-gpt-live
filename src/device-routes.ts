@@ -241,7 +241,12 @@ async function proxyDeviceChatGPT(
     ? undefined
     : await readBoundedBody(request);
   if (bodyBytes instanceof Response) return bodyBytes;
-  const bodyText = bodyBytes ? new TextDecoder().decode(bodyBytes) : undefined;
+  const bodyText = enforceServerOwnedDeviceSettings(
+    record,
+    subpath,
+    request.method,
+    bodyBytes ? new TextDecoder().decode(bodyBytes) : undefined,
+  );
   const response = await internalAuthRequest(options.auth, record, request, {
     path: subpath,
     method: request.method,
@@ -371,7 +376,6 @@ async function updateDeviceFromAuthResponse(
       record.codexState = "idle";
       record.codexQueueDepth = 0;
       if (typeof session?.["model"] === "string") record.selectedModel = session["model"];
-      if (typeof session?.["voice"] === "string") record.voice = session["voice"];
       record.pendingConfirmations = [];
     });
   }
@@ -384,6 +388,27 @@ async function updateDeviceFromAuthResponse(
       record.pendingConfirmations = [];
     });
   }
+}
+
+function enforceServerOwnedDeviceSettings(
+  record: DeviceRecord,
+  subpath: string,
+  method: string,
+  bodyText: string | undefined,
+): string | undefined {
+  if (subpath !== "/realtime/app-server" || method !== "POST" || bodyText === undefined) {
+    return bodyText;
+  }
+  const payload = parseJsonText(bodyText);
+  if (!isRecord(payload)) return bodyText;
+  const requestedSession = isRecord(payload["session"]) ? payload["session"] : {};
+  return JSON.stringify({
+    ...payload,
+    session: {
+      ...requestedSession,
+      voice: normalizeVoice(record.voice) ?? "vale",
+    },
+  });
 }
 
 async function monitorBridgeEvents(
