@@ -35,6 +35,10 @@ export interface DeviceRecord {
   selectedModel?: string;
   voice?: string;
   connectionState?: string;
+  codexState?: "idle" | "working";
+  codexQueueDepth?: number;
+  lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
+  lastCodexTaskAt?: number;
   pendingConfirmations: PendingDeviceConfirmation[];
   lastError?: string;
   createdAt: number;
@@ -60,6 +64,10 @@ export interface PublicDeviceSession {
   selectedModel?: string;
   voice?: string;
   connectionState?: string;
+  codexState?: "idle" | "working";
+  codexQueueDepth?: number;
+  lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
+  lastCodexTaskAt?: number;
   pendingConfirmations: PendingDeviceConfirmation[];
   lastError?: string;
   lastSeenAt: number;
@@ -187,13 +195,38 @@ export class DeviceRegistry {
       switch (event["type"]) {
         case "session.started":
           record.connectionState = "live";
+          record.codexState = "idle";
+          record.codexQueueDepth = 0;
           delete record.lastError;
           break;
         case "session.closed":
           record.connectionState = "closed";
+          record.codexState = "idle";
+          record.codexQueueDepth = 0;
           delete record.liveSessionId;
           record.pendingConfirmations = [];
           break;
+        case "handoff.started":
+          record.codexState = "working";
+          if (event["queued"] === true) {
+            record.codexQueueDepth = Math.max(0, (record.codexQueueDepth ?? 0) - 1);
+          }
+          break;
+        case "handoff.queued":
+          record.codexState = "working";
+          if (typeof event["position"] === "number") {
+            record.codexQueueDepth = Math.max(0, Math.floor(event["position"]));
+          }
+          break;
+        case "handoff.completed": {
+          const status = event["status"];
+          if (status === "completed" || status === "failed" || status === "interrupted") {
+            record.lastCodexTaskStatus = status;
+            record.lastCodexTaskAt = this.now();
+          }
+          record.codexState = (record.codexQueueDepth ?? 0) > 0 ? "working" : "idle";
+          break;
+        }
         case "tool.pending_confirmation": {
           const callId = event["callId"];
           const name = event["name"];
@@ -236,6 +269,10 @@ export class DeviceRegistry {
       ...(record.selectedModel ? { selectedModel: record.selectedModel } : {}),
       ...(record.voice ? { voice: record.voice } : {}),
       ...(record.connectionState ? { connectionState: record.connectionState } : {}),
+      ...(record.codexState ? { codexState: record.codexState } : {}),
+      ...(record.codexQueueDepth !== undefined ? { codexQueueDepth: record.codexQueueDepth } : {}),
+      ...(record.lastCodexTaskStatus ? { lastCodexTaskStatus: record.lastCodexTaskStatus } : {}),
+      ...(record.lastCodexTaskAt !== undefined ? { lastCodexTaskAt: record.lastCodexTaskAt } : {}),
       pendingConfirmations: structuredClone(record.pendingConfirmations),
       ...(record.lastError ? { lastError: record.lastError } : {}),
       lastSeenAt: record.lastSeenAt,

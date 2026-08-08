@@ -14,6 +14,9 @@ The integration carries focused server-side patches, each covered by tests:
 - acknowledge a handoff only after Codex accepts it, while keeping Live usable;
 - avoid a `speak_to_user` request/response deadlock with newer app-server builds;
 - inject and refresh an owner-local clock snapshot for native time questions;
+- answer app-server `currentTime/read` from the live owner clock;
+- serialize, deduplicate, and expose Codex handoff lifecycle state;
+- guarantee a fallback completion announcement from `turn/completed`;
 - disable vague delegated-task filler when the app-server supports that option.
 
 These changes are intentionally kept in the vendored boundary so they can be

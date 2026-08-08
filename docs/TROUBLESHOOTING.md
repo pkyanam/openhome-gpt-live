@@ -67,6 +67,31 @@ Check in order:
 Say the wake phrase as part of the request: “Juniper, tell me the weather,” not
 just “Juniper” followed by a long pause.
 
+## Codex finishes silently, mixes two requests, or web search bounces back
+
+Upgrade both halves of the integration to **0.1.2 or newer**. Older bridges
+depended on the execution agent to call its speech tool and allowed a second
+handoff to steer the first task's active turn.
+
+After upgrading the host, upload the rebuilt Ability ZIP in the existing
+Ability editor, save, tap **Sync Abilities**, and restart the Agent. Do not
+delete and recreate the Ability. The `/setup` page should then show **Codex:
+idle** or **working**, plus a queue count when another delegated request is
+waiting.
+
+Native GPT Live normally performs web searches itself. If it delegates one,
+the Codex backend now treats that delegation as a search fallback instead of
+asking the native assistant to try again.
+
+## The reported time is several minutes old
+
+Version 0.1.2 treats every completed assistant transcript as a hard return to
+wake mode, including speech appended by the bridge. This ensures the next
+“Juniper” refreshes the Mac's clock before its request audio is forwarded. It
+also answers app-server `currentTime/read` requests directly from the host
+clock. Upgrade the Ability, sync, and restart the Agent if the phone page still
+shows an older live session.
+
 ## It worked until a reboot
 
 On the host, run `bun run service:status`. On the DevKit, the Ability installs a

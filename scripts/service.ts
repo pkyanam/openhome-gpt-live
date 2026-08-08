@@ -30,6 +30,8 @@ async function macService(requested: string): Promise<void> {
   if (requested === "install") {
     await mkdir(launchAgents, { recursive: true });
     await mkdir(resolve(projectRoot, "data"), { recursive: true });
+    const executablePath = process.env.PATH?.trim()
+      || "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -38,6 +40,8 @@ async function macService(requested: string): Promise<void> {
   <key>ProgramArguments</key>
   <array><string>${escapeXml(bun)}</string><string>src/server.ts</string></array>
   <key>WorkingDirectory</key><string>${escapeXml(projectRoot)}</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>${escapeXml(executablePath)}</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>

@@ -19,6 +19,10 @@ If `OPENHOME_API_KEY` was supplied during setup:
 bun run upload:ability
 ```
 
+The command creates the Ability when it is absent and upgrades the existing
+Ability in place when it is already present. It preserves the existing Ability
+id and linked Third Party Keys.
+
 Otherwise upload `dist/openhome-gpt-live-ability.zip` in the OpenHome dashboard
 as a Local Ability. Complete the [OpenHome checklist](../README.md#finish-in-openhome).
 

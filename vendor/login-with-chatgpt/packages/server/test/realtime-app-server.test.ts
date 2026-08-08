@@ -112,6 +112,22 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(String(request?.params["text"])).toContain("captured live by the Mac bridge");
   });
 
+  test("answers app-server current-time requests from the live owner clock", async () => {
+    const wire: Array<Record<string, unknown>> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      now: () => 1_786_212_345_678,
+    });
+    (session as any).threadId = "thread_1";
+    (session as any).send = (message: Record<string, unknown>) => wire.push(message);
+
+    await (session as any).handleServerRequest(17, "currentTime/read", { threadId: "thread_1" });
+
+    expect(wire).toEqual([{ id: 17, result: { currentTimeAt: 1_786_212_345 } }]);
+  });
+
   test("speaks a concrete acknowledgement after a Codex handoff starts", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];
@@ -136,6 +152,92 @@ describe("ChatGPTRealtimeAppServerSession", () => {
 
     expect(events).toContainEqual({ type: "handoff", transcript: "Create a small game." });
     expect(speech).toEqual(["Codex started. You can keep talking while it works."]);
+  });
+
+  test("queues overlapping handoffs, deduplicates retries, and isolates the next turn", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      handoffAcknowledgement: "Codex started the first task.",
+      now: () => 1_000,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).threadId = "thread_1";
+    (session as any).speak = async (text: string) => speech.push(text);
+    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params });
+      return method === "turn/start"
+        ? { result: { turn: { id: "turn_queued" } } }
+        : { result: {} };
+    };
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Build a game." },
+    });
+    (session as any).handleNotification("turn/started", {
+      turn: { id: "turn_first" },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Look up OpenHome.",
+        active_transcript: [
+          { role: "assistant", text: "OpenHome makes an AI speaker." },
+          { role: "user", text: "Look up OpenHome." },
+        ],
+      },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Look up OpenHome." },
+    });
+
+    await (session as any).handleTurnCompleted({
+      turn: {
+        id: "turn_first",
+        status: "completed",
+        items: [{ type: "agentMessage", text: "I cannot search the web." }],
+      },
+    });
+
+    expect(speech).toContain("Codex is still working on your earlier task. I queued this request in position 1.");
+    expect(speech).toContain("Codex finished your earlier build task.");
+    expect(speech).toContain("I’ve started your next queued Codex task.");
+    expect(events.some((event) => event.type === "handoff.deduplicated")).toBe(true);
+    expect(events.some((event) => event.type === "handoff.completed" && event.fallbackSpeech)).toBe(true);
+    const queuedStart = requests.find((request) => request.method === "turn/start");
+    expect(queuedStart?.params).toMatchObject({ threadId: "thread_1" });
+    expect(JSON.stringify(queuedStart?.params)).toContain("Look up OpenHome.");
+    expect(JSON.stringify(queuedStart?.params)).toContain("OpenHome makes an AI speaker.");
+  });
+
+  test("speaks the completed turn result when Codex omitted its speech tool", async () => {
+    const speech: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+    });
+    (session as any).threadId = "thread_1";
+    (session as any).speak = async (text: string) => speech.push(text);
+    (session as any).expectResult = async () => ({ result: {} });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Create a project." },
+    });
+    (session as any).handleNotification("turn/started", { turn: { id: "turn_1" } });
+
+    await (session as any).handleTurnCompleted({
+      turn: {
+        id: "turn_1",
+        status: "completed",
+        items: [{ type: "agentMessage", text: "Done — I created the project and verified it." }],
+      },
+    });
+
+    expect(speech.at(-1)).toBe("Done — I created the project and verified it.");
   });
 
   test("rejects reserved and duplicate dynamic-tool names", () => {

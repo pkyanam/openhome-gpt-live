@@ -47,7 +47,8 @@ The installer:
 4. generates private enrollment/encryption secrets;
 5. runs all TypeScript and DevKit tests and builds a validated Ability ZIP;
 6. installs an always-on launchd or systemd service;
-7. uploads the Ability when an OpenHome API key was supplied.
+7. uploads a new Ability or upgrades the existing Ability in place when an
+   OpenHome API key was supplied, preserving linked Third Party Keys.
 
 It installs under `~/.openhome-gpt-live` by default. Re-running the same command
 performs a safe update and keeps `.env`, paired-device state, and ChatGPT login
@@ -92,6 +93,12 @@ Then try a Codex task:
 “Juniper” is required for every new request, including interruptions. The
 DevKit keeps only an offline wake-word detector active while armed; it forwards
 microphone audio to GPT Live only after the wake phrase is detected.
+
+Codex tasks are serialized. The speaker acknowledges the first task, tells you
+when another task is queued, stays available for native conversation and web
+search while Codex works, and announces every completion. The paired-phone page
+shows whether Codex is idle or working and how many tasks are queued; spoken
+request text is not stored in the device registry.
 
 ## Access modes
 
