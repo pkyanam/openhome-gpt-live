@@ -135,7 +135,10 @@ Try these in order:
 
 “Juniper” is required for every new request, including interruptions. While
 armed, the offline wake detector runs locally and the worker sends silence to
-GPT Live. Real microphone audio is forwarded only after the wake phrase.
+GPT Live. Real microphone audio is forwarded only after the wake phrase. The
+microphone gate closes again after every answer without disconnecting GPT Live,
+so follow-up requests retain the same conversation context but still require
+“Juniper.”
 
 The browser control page reports the last lane used without storing the spoken
 request:
