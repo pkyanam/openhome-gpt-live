@@ -123,7 +123,7 @@ export function PairingApp() {
       if (!response.ok || !payload.session) throw new Error(payload.message ?? "Voice update failed.");
       setSession(payload.session);
       setNotice(payload.reconnecting
-        ? `${voiceLabel(voice)} saved. GPT Live is reconnecting; give the speaker about ten seconds.`
+        ? `${voiceLabel(voice)} saved. GPT Live is reconnecting automatically; this page will return to live.`
         : `${voiceLabel(voice)} saved. It will be used when GPT Live next connects.`);
     } catch (cause) {
       setError(errorMessage(cause));

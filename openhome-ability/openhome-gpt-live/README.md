@@ -36,7 +36,8 @@ screen, keyboard, or mouse.
 Supported GPT Live voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
 Spruce, and Vale. Speaking voice and wake phrase are independent. A phone voice
 change closes the current Live transport; the DevKit worker reads the new
-server-owned setting when it reconnects.
+server-owned setting and reconnects in-process without waiting for OpenHome or
+systemd to relaunch it.
 
 ## First pairing
 

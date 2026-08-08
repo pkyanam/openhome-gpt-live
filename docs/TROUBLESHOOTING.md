@@ -113,12 +113,13 @@ search nor Codex.
 ## Changing the voice has no effect
 
 Use the picker on the paired `/setup` page. Saving closes the current Live
-session and normally reconnects within about ten seconds. Refresh the page and
-confirm the selected voice remains visible and the connection returns to live.
+session. The page should show `reconnecting` and return to `live` automatically,
+normally within a few seconds. Confirm the selected voice remains visible.
 
-If it stays closed, restart the Agent once. The optional
+If it stays `closed`, the DevKit probably still has an Ability older than 0.2.1.
+In OpenHome, run **Sync Abilities**, then **Restart Agent** once. The optional
 `openhome_gpt_live_voice` Third Party Key is only an initial value; the paired
-phone selection is server-owned and should win after enrollment.
+phone selection is server-owned and wins after enrollment.
 
 The supported voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
 Spruce, and Vale. Voice and wake phrase are independent.
@@ -136,14 +137,14 @@ The host must remain awake and online. If you used a temporary
 hostname, rerun setup, update `openhome_gpt_live_server_url`, then sync and
 restart the Agent.
 
-The Ability installs a per-user DevKit service where systemd is available. If
-the public endpoint is healthy but `/setup` remains closed, restart the Agent.
+The Ability installs a per-user DevKit service where systemd is available, but
+normal Live reconnects happen inside the worker and do not depend on systemd.
 
 ## The setup page says “closed”
 
-The current WebRTC transport ended. The DevKit watchdog should reconnect in
-under one minute. A deliberate voice change also produces this state briefly.
-If it persists, restart the Agent and inspect the Ability's DevKit log.
+The current WebRTC transport ended. Version 0.2.1 and newer immediately changes
+this to `reconnecting` and opens another session. If `closed` persists, sync the
+latest Ability, restart the Agent, and inspect the Ability's DevKit log.
 
 ## No startup sound
 
