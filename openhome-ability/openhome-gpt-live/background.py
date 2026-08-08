@@ -87,7 +87,7 @@ class OpenHomeGPTLiveBackgroundCapability(MatchingCapability):
                     ):
                         await self._announce(
                             start.get("spoken_response")
-                            or "Open the GPT Live setup page on your phone to authorize ChatGPT."
+                            or "Open the GPT Live setup page in a trusted browser to authorize ChatGPT."
                         )
                         announced_authorization = True
                 else:
@@ -178,12 +178,12 @@ class OpenHomeGPTLiveBackgroundCapability(MatchingCapability):
         if setup_url and pairing_code:
             grouped = f"{pairing_code[:4]}, {pairing_code[4:]}"
             return (
-                f"Open {setup_url} on your phone and enter pairing code {grouped}. "
+                f"Open {setup_url} in a trusted browser and enter pairing code {grouped}. "
                 "Then authorize ChatGPT. GPT Live will become active automatically."
             )
         if setup_url:
             return (
-                f"Open {setup_url} on your paired phone and finish ChatGPT authorization. "
+                f"Open {setup_url} in your paired browser and finish ChatGPT authorization. "
                 "GPT Live will become active automatically."
             )
         return "Finish ChatGPT authorization on the paired GPT Live setup page."

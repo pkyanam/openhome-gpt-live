@@ -323,7 +323,7 @@ async def _wait_for_chatgpt_auth(client, config, stop_event):
     while not stop_event.is_set() and time.monotonic() < deadline:
         _write_status(
             "awaiting_chatgpt_auth",
-            message="Authorize ChatGPT from the paired phone.",
+            message="Authorize ChatGPT from the paired browser control page.",
             user_code=login.get("userCode"),
             verification_url=login.get("verificationUrl"),
         )
@@ -343,7 +343,7 @@ async def _wait_for_chatgpt_auth(client, config, stop_event):
 
 
 async def _sync_device_settings(client, config):
-    """Apply server-owned phone settings before negotiating a new Live call."""
+    """Apply server-owned browser settings before negotiating a new Live call."""
     response = await client.get(_device_settings_path(config))
     response.raise_for_status()
     configured_voice = _validate_voice(
@@ -710,7 +710,7 @@ async def _consume_bridge_events(client, config, live_session_id, closed_event):
             if event_type == "tool.pending_confirmation":
                 _write_status(
                     "approval_pending",
-                    message="An OpenHome action is waiting for approval on the paired phone.",
+                    message="An OpenHome action is waiting for approval in the paired browser control page.",
                     call_id=event.get("callId"),
                     tool=event.get("name"),
                 )
@@ -1280,13 +1280,13 @@ def _setup_spoken_response(registration, login):
     if pairing:
         grouped = f"{pairing[:4]}, {pairing[4:]}"
         return (
-            f"Open {registration['setupUrl']} on your phone and enter pairing code {grouped}. "
+            f"Open {registration['setupUrl']} in a trusted browser and enter pairing code {grouped}. "
             "Then authorize ChatGPT there. GPT Live will become active automatically."
         )
     if login.get("status") == "authenticated":
-        return "Your phone is already paired. GPT Live is connecting automatically."
+        return "Your browser is already paired. GPT Live is connecting automatically."
     return (
-        f"Open {registration['setupUrl']} on your paired phone and finish ChatGPT authorization. "
+        f"Open {registration['setupUrl']} in your paired browser and finish ChatGPT authorization. "
         "GPT Live will become active automatically."
     )
 

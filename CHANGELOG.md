@@ -1,8 +1,14 @@
 # Changelog
 
+## 0.2.3 - 2026-08-08
+
+- Replace phone-specific setup language with the accurate browser control-page
+  model. `/setup` can run in any trusted browser on the host, another computer,
+  a phone, or a tablet and is not embedded in the OpenHome mobile app.
+
 ## 0.2.2 - 2026-08-08
 
-- Make the paired phone's saved voice authoritative during every Live
+- Make the browser control page's saved voice authoritative during every Live
   negotiation. The host now replaces a stale DevKit voice before forwarding
   the session to GPT Live, so an older local configuration cannot roll Vale or
   another selected voice back to Juniper.
@@ -12,7 +18,7 @@
 - Reconnect GPT Live inside the long-running DevKit worker after a voice change,
   session expiry, or recoverable connection failure instead of depending on an
   external service manager to relaunch a one-session process.
-- Show `reconnecting` on the paired phone while the old voice session is being
+- Show `reconnecting` in the paired browser while the old voice session is being
   replaced.
 
 ## 0.2.0 - 2026-08-08
@@ -25,7 +31,7 @@
 - Keep file, project, OpenHome, application, and computer actions in the
   serialized Codex handoff lane with immediate acknowledgement and guaranteed
   completion speech.
-- Add a paired-phone picker for Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
+- Add a paired-browser picker for Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
   Spruce, and Vale. Vale is the new-device default; speaking voice and wake
   phrase remain independent.
 - Persist the selected voice server-side and reconnect GPT Live automatically
@@ -56,6 +62,6 @@
 - Initial public release.
 - Headless GPT Live WebRTC on an OpenHome Local/Background Ability.
 - Offline per-request Juniper wake word and PipeWire echo cancellation.
-- Phone-based ChatGPT authorization and consequential-action approvals.
+- Browser-based ChatGPT authorization and consequential-action approvals.
 - Codex workspace, confirmed host-control, and Full Access modes.
 - One-line installer, service manager, doctor, reproducible ZIP, and CI.

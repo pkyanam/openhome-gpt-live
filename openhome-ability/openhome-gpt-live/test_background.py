@@ -80,7 +80,7 @@ class FakeCapabilityWorker:
             payload = {
                 "success": True,
                 "pairing_code": "12345678",
-                "spoken_response": "Pair this phone.",
+                "spoken_response": "Pair this browser.",
             }
         else:
             payload = {"success": True, "stopped": True}
@@ -104,7 +104,7 @@ class BackgroundProviderTests(unittest.IsolatedAsyncioTestCase):
 
         names = [call[0] for call in capability.capability_worker.calls]
         self.assertEqual(names, ["live_status", "configure_and_start", "stop_live"])
-        self.assertEqual(capability.capability_worker.spoken, ["Pair this phone."])
+        self.assertEqual(capability.capability_worker.spoken, ["Pair this browser."])
         configure_args = capability.capability_worker.calls[1][1]
         self.assertEqual(configure_args[3], "vale")
         self.assertEqual(configure_args[-2:], ["juniper", "30"])

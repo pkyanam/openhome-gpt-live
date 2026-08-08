@@ -6,7 +6,8 @@ search and local Codex tool access. Say **“Juniper, …”** before every requ
 - GPT Live owns speech, ordinary conversation, and general knowledge.
 - OpenAI's first-party `web_search` handles current information.
 - Codex handles files, projects, applications, and computer actions.
-- ChatGPT authorization happens on your phone with a device code.
+- ChatGPT authorization happens in the hosted `/setup` control page with a
+  device code.
 - No OpenAI API key, ChatGPT cookie capture, Chromium, display, keyboard, or
   mouse is needed on the DevKit.
 
@@ -30,6 +31,19 @@ search and local Codex tool access. Say **“Juniper, …”** before every requ
 
 The official DevKit is the supported full-duplex target. Custom Raspberry Pi
 audio may require manual devices and may not support interruption as well.
+
+## What the browser control page is
+
+The macOS or Linux host serves a small web control page at `/setup`. Open its
+public HTTPS URL in any trusted browser: the browser can be on the host itself,
+another computer, a phone, or a tablet. That browser is used only for one-time
+DevKit pairing, ChatGPT device authorization, voice selection, status, and
+consequential-action approvals. Speaker audio never passes through it.
+
+The control page is **not embedded in the OpenHome mobile app**. OpenHome's app
+or dashboard is used separately to install, sync, and restart the Local
+Ability. Calling `/setup` the “paired browser” means the browser profile holding
+this integration's HttpOnly pairing cookie, not a particular physical device.
 
 ## Install the host
 
@@ -83,15 +97,15 @@ bun run pairing:code -- --wait=180
 ```
 
 It prints the eight-digit DevKit code and a one-click setup link. Open that link
-on your phone, tap **Pair DevKit**, then use **Open ChatGPT authorization** and
-enter the ChatGPT device code shown on the page.
+in any trusted browser, select **Pair DevKit**, then use **Open ChatGPT
+authorization** and enter the ChatGPT device code shown on the page.
 
 The DevKit may also speak the pairing code, but audio is not required. The host
 keeps only a private, short-lived copy for this command: it expires after 15
 minutes and is deleted when claimed.
 
-When setup succeeds, the phone page shows the device as live and the ChatGPT
-account as connected.
+When setup succeeds, the browser control page shows the device as live and the
+ChatGPT account as connected.
 
 ## Choose a voice
 
@@ -102,10 +116,10 @@ are:
 
 Vale is the default for new devices. Saving a different voice restarts only the
 Live connection. The page shows **reconnecting** and returns to **live**
-automatically, normally within a few seconds. The saved phone choice is
-authoritative on every reconnect, even if the DevKit still has an older local
-fallback value. The wake phrase is a
-separate setting and remains **Juniper** unless you change the optional
+automatically, normally within a few seconds. The selection saved through the
+control page is authoritative on every reconnect, even if the DevKit still has
+an older local fallback value. The wake phrase is a separate setting and
+remains **Juniper** unless you change the optional
 `openhome_gpt_live_wake_phrase` Third Party Key.
 
 ## Verify the speaker
@@ -123,7 +137,8 @@ Try these in order:
 armed, the offline wake detector runs locally and the worker sends silence to
 GPT Live. Real microphone audio is forwarded only after the wake phrase.
 
-The phone page reports the last lane used without storing the spoken request:
+The browser control page reports the last lane used without storing the spoken
+request:
 
 | Request | Lane |
 | --- | --- |
@@ -142,7 +157,7 @@ The installer defaults to **Workspace only**.
 | Mode | Voice-started Codex access |
 | --- | --- |
 | Workspace only | Read, create, edit, run, and test inside the configured folder. |
-| Phone confirmed | Workspace tasks run directly; broader computer actions wait for approval on `/setup`. |
+| Browser confirmed | Workspace tasks run directly; broader computer actions wait for approval on `/setup`. |
 | Full Access | Runs delegated Codex with `danger-full-access` and no approval prompt. The owner assumes the risk. |
 
 Change the mode later with:
@@ -206,7 +221,7 @@ https://github.com/pkyanam/openhome-gpt-live
 Goal:
 Install the always-on host bridge, build and upload the OpenHome Local Ability,
 connect it through stable HTTPS, retrieve the DevKit pairing code, help me
-authorize ChatGPT on my phone, and verify GPT Live conversation, OpenAI web
+authorize ChatGPT in a trusted browser, and verify GPT Live conversation, OpenAI web
 search, and a local Codex workspace task. Continue autonomously until it works
 or a genuinely human-only action is required.
 
@@ -219,9 +234,10 @@ Rules:
   DevKit credentials, tunnel credentials, .env, or data/. Show the bootstrap
   token only when I must paste it into OpenHome.
 - Do not install a browser on the DevKit and do not capture ChatGPT web cookies.
-  Authorization uses the Login with ChatGPT device-code flow on my phone.
+  Authorization uses the Login with ChatGPT device-code flow in the hosted
+  /setup browser control page.
 - Require a stable HTTPS origin. A random trycloudflare URL is evaluation-only.
-- Default Codex to Workspace only. Ask before Phone confirmed or Full Access;
+- Default Codex to Workspace only. Ask before Browser confirmed or Full Access;
   Full Access requires an explicit risk acknowledgement.
 - Do not weaken HTTPS, account-email binding, origin checks, secret lengths, or
   confirmation boundaries to make setup pass.
@@ -249,7 +265,9 @@ Execution:
 7. Run `bun run pairing:code -- --wait=180`. Give me the one-click setup link
    and pairing code without exposing any other state. If no code appears,
    diagnose Ability installation/configuration instead of asking me to inspect
-   raw logs. Have me pair the phone and complete ChatGPT device authorization.
+   raw logs. Have me pair a trusted browser and complete ChatGPT device
+   authorization there. Explain that /setup is hosted by this Mac/Linux bridge
+   and is not part of the OpenHome mobile app.
 8. On /setup, let me choose one of Arbor, Breeze, Cove, Ember, Juniper, Maple,
    Sol, Spruce, or Vale. Explain that the speaking voice and Juniper wake phrase
    are independent. Wait for Live to reconnect after a change.

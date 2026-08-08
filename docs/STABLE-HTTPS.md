@@ -1,7 +1,9 @@
 # Stable HTTPS setup
 
-The OpenHome DevKit and your phone must reach the Bun bridge through one stable
-HTTPS origin. The bridge itself should keep listening only on
+The OpenHome DevKit and whichever trusted browser opens `/setup` must reach the
+Bun bridge through one stable HTTPS origin. The browser may run on the host,
+another computer, a phone, or a tablet; `/setup` is not embedded in the
+OpenHome mobile app. The bridge itself should keep listening only on
 `127.0.0.1:3000`; a tunnel or reverse proxy supplies HTTPS.
 
 ## Recommended: Cloudflare Tunnel

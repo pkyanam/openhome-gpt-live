@@ -173,9 +173,9 @@ export function PairingApp() {
     <main className="pairing-shell">
       <header className="pairing-header">
         <p className="eyebrow">OPENHOME × GPT LIVE</p>
-        <h1>{session ? "Your phone is the control surface." : "Pair this phone."}</h1>
+        <h1>{session ? "This browser is your control surface." : "Pair this browser."}</h1>
         <p className="lede">
-          ChatGPT authorization and consequential-action approvals happen here. Live audio stays on the OpenHome DevKit.
+          ChatGPT authorization and consequential-action approvals happen in this browser. Live audio stays on the OpenHome DevKit.
         </p>
       </header>
 
@@ -301,7 +301,7 @@ export function PairingApp() {
           )}
 
           {session.pendingConfirmations.length > 0 && (
-            <section className="pairing-card mobile-confirmations" aria-live="assertive">
+            <section className="pairing-card browser-confirmations" aria-live="assertive">
               <div className="section-heading">
                 <p className="eyebrow">APPROVAL REQUIRED</p>
                 <h2>Review before OpenHome changes anything.</h2>

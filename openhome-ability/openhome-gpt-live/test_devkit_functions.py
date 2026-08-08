@@ -54,7 +54,7 @@ class DevKitProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be one of"):
             live._validate_voice("made-up")
 
-    def test_syncs_phone_selected_voice_before_live_connects(self):
+    def test_syncs_browser_selected_voice_before_live_connects(self):
         class Response:
             def raise_for_status(self):
                 return None
@@ -85,7 +85,7 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(config["voice"], "vale")
         self.assertEqual(saved["voice"], "vale")
 
-    def test_reconnects_in_process_and_applies_a_new_phone_voice(self):
+    def test_reconnects_in_process_and_applies_a_new_browser_voice(self):
         voices = []
         statuses = []
         sync_count = 0

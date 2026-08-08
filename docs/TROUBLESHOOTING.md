@@ -65,7 +65,7 @@ local inbox is mode 0600 and deletes a code when it is paired or expires.
 
 ## The ChatGPT authorization code is missing
 
-The eight-digit OpenHome pairing code comes first. After the phone is paired,
+The eight-digit OpenHome pairing code comes first. After the browser is paired,
 the DevKit requests a separate ChatGPT device code. Keep `/setup` open for a
 few seconds; it refreshes automatically. Tap **Open ChatGPT authorization** and
 enter the code shown there. Do not paste a bearer token or capture browser
@@ -119,7 +119,7 @@ normally within a few seconds. Confirm the selected voice remains visible.
 If it stays `closed`, the DevKit probably still has an Ability older than 0.2.1.
 In OpenHome, run **Sync Abilities**, then **Restart Agent** once. The optional
 `openhome_gpt_live_voice` Third Party Key is only an initial value; the paired
-phone selection is server-owned and is enforced on every Live negotiation.
+browser selection is server-owned and is enforced on every Live negotiation.
 
 The supported voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
 Spruce, and Vale. Voice and wake phrase are independent.

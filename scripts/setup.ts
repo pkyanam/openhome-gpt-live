@@ -142,7 +142,7 @@ async function chooseAccessMode(current: string): Promise<"disabled" | "confirme
   if (nonInteractive) return normalized as "disabled" | "confirmed" | "full";
   console.log("\nCodex access:");
   console.log("  1. Workspace only (recommended)");
-  console.log("  2. Ask on the paired phone before controlling the Mac");
+  console.log("  2. Ask in the paired browser control page before controlling the Mac");
   console.log("  3. Full Access without approval");
   const defaultChoice = normalized === "confirmed" ? "2" : normalized === "full" ? "3" : "1";
   const answer = (await prompts!.question(`Choose 1, 2, or 3 [${defaultChoice}]: `)).trim() || defaultChoice;
