@@ -85,6 +85,70 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(config["voice"], "vale")
         self.assertEqual(saved["voice"], "vale")
 
+    def test_reconnects_in_process_and_applies_a_new_phone_voice(self):
+        voices = []
+        statuses = []
+        sync_count = 0
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"models": ["gpt-live-test"]}
+
+        class Client:
+            async def get(self, _path):
+                return Response()
+
+        async def fake_wait_for_auth(_client, _config, _stop_event):
+            return {"user": {"email": "owner@example.test"}}
+
+        async def fake_sync(_client, config):
+            nonlocal sync_count
+            sync_count += 1
+            if sync_count == 2:
+                config["voice"] = "vale"
+
+        async def fake_run_live(_client, config, _model, stop_event):
+            voices.append(config["voice"])
+            if len(voices) == 2:
+                stop_event.set()
+
+        async def fake_wait(_stop_event, _seconds):
+            return None
+
+        originals = (
+            live._wait_for_chatgpt_auth,
+            live._sync_device_settings,
+            live._run_live_session,
+            live._wait_or_stop,
+            live._write_status,
+        )
+        live._wait_for_chatgpt_auth = fake_wait_for_auth
+        live._sync_device_settings = fake_sync
+        live._run_live_session = fake_run_live
+        live._wait_or_stop = fake_wait
+        live._write_status = lambda state, **details: statuses.append((state, details))
+        try:
+            asyncio.run(live._run_reconnecting_worker(
+                Client(),
+                {"device_id": "dev_1", "voice": "juniper", "preferred_model": ""},
+                asyncio.Event(),
+            ))
+        finally:
+            (
+                live._wait_for_chatgpt_auth,
+                live._sync_device_settings,
+                live._run_live_session,
+                live._wait_or_stop,
+                live._write_status,
+            ) = originals
+
+        self.assertEqual(voices, ["juniper", "vale"])
+        self.assertIn("reconnecting", [state for state, _details in statuses])
+        self.assertEqual(statuses[-1][0], "stopped")
+
     def test_requires_https_except_loopback(self):
         self.assertEqual(live._validate_server_url("https://voice.example.test/"), "https://voice.example.test")
         self.assertEqual(live._validate_server_url("http://127.0.0.1:3000"), "http://127.0.0.1:3000")

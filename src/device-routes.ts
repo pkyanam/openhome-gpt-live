@@ -177,7 +177,7 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
           if (closeResponse.ok) {
             record = await options.registry.update(record.id, (current) => {
               delete current.liveSessionId;
-              current.connectionState = "closed";
+              current.connectionState = "reconnecting";
               current.codexState = "idle";
               current.codexQueueDepth = 0;
               current.pendingConfirmations = [];

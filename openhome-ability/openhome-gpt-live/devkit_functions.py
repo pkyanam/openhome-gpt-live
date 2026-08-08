@@ -52,6 +52,8 @@ SUPPORTED_VOICES = {
     "maple", "sol", "spruce", "vale",
 }
 DEFAULT_ACTIVE_IDLE_SECONDS = 30
+RECONNECT_BASE_SECONDS = 1.0
+RECONNECT_MAX_SECONDS = 30.0
 WAKE_PREROLL_FRAMES = 25
 WAKE_KWS_THRESHOLD = 1e-25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
@@ -253,25 +255,59 @@ async def _run_worker():
         timeout=httpx.Timeout(45.0, read=None),
         follow_redirects=False,
     ) as client:
-        session = await _wait_for_chatgpt_auth(client, config, stop_event)
-        if stop_event.is_set():
-            return
-        await _sync_device_settings(client, config)
-        models_response = await client.get(_device_path(config, "/models"))
-        models_response.raise_for_status()
-        models = models_response.json().get("models", [])
-        model = _choose_model(models, config.get("preferred_model", ""))
+        await _run_reconnecting_worker(client, config, stop_event)
+
+
+async def _run_reconnecting_worker(client, config, stop_event):
+    """Keep Live connected without relying on OpenHome or systemd to respawn us."""
+    retry_seconds = RECONNECT_BASE_SECONDS
+    while not stop_event.is_set():
+        model = None
+        connected_at = None
+        try:
+            session = await _wait_for_chatgpt_auth(client, config, stop_event)
+            if stop_event.is_set():
+                break
+            await _sync_device_settings(client, config)
+            models_response = await client.get(_device_path(config, "/models"))
+            models_response.raise_for_status()
+            models = models_response.json().get("models", [])
+            model = _choose_model(models, config.get("preferred_model", ""))
+            _write_status(
+                "connecting",
+                message="Opening native GPT Live WebRTC.",
+                model=model,
+                voice=config.get("voice", DEFAULT_VOICE),
+                account=session.get("user", {}).get("email"),
+            )
+            connected_at = time.monotonic()
+            await _run_live_session(client, config, model, stop_event)
+            if stop_event.is_set():
+                break
+            lived_seconds = time.monotonic() - connected_at
+            retry_seconds = (
+                RECONNECT_BASE_SECONDS
+                if lived_seconds >= 30.0
+                else min(RECONNECT_MAX_SECONDS, max(2.0, retry_seconds * 2.0))
+            )
+            log.info("GPT Live session ended; reconnecting in %.1f seconds", retry_seconds)
+        except Exception as error:
+            if stop_event.is_set():
+                break
+            log.warning("GPT Live connection failed; retrying: %s", error)
+            retry_seconds = min(
+                RECONNECT_MAX_SECONDS,
+                max(2.0, retry_seconds * 2.0),
+            )
         _write_status(
-            "connecting",
-            message="Opening native GPT Live WebRTC.",
+            "reconnecting",
+            message=f"GPT Live is reconnecting in {retry_seconds:g} seconds.",
             model=model,
-            account=session.get("user", {}).get("email"),
+            voice=config.get("voice", DEFAULT_VOICE),
         )
-        await _run_live_session(client, config, model, stop_event)
-        if stop_event.is_set():
-            _write_status("stopped", message="Stopped by the user.")
-        else:
-            _write_status("closed", message="The GPT Live session ended.", model=model)
+        await _wait_or_stop(stop_event, retry_seconds)
+
+    _write_status("stopped", message="Stopped by the user.")
 
 
 async def _wait_for_chatgpt_auth(client, config, stop_event):

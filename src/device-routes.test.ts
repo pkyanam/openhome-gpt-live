@@ -152,7 +152,7 @@ describe("headless DevKit routes", () => {
     expect(voiceResponse.status).toBe(200);
     expect(await voiceResponse.json()).toMatchObject({
       reconnecting: true,
-      session: { voice: "vale", connectionState: "closed" },
+      session: { voice: "vale", connectionState: "reconnecting" },
     });
     expect(internalRequests.some((request) =>
       request.method === "DELETE"

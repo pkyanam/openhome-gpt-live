@@ -101,7 +101,8 @@ are:
 **Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol, Spruce, and Vale.**
 
 Vale is the default for new devices. Saving a different voice restarts only the
-Live connection and normally takes about ten seconds. The wake phrase is a
+Live connection. The page shows **reconnecting** and returns to **live**
+automatically, normally within a few seconds. The wake phrase is a
 separate setting and remains **Juniper** unless you change the optional
 `openhome_gpt_live_wake_phrase` Third Party Key.
 

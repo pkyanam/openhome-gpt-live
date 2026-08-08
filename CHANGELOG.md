@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 - 2026-08-08
+
+- Reconnect GPT Live inside the long-running DevKit worker after a voice change,
+  session expiry, or recoverable connection failure instead of depending on an
+  external service manager to relaunch a one-session process.
+- Show `reconnecting` on the paired phone while the old voice session is being
+  replaced.
+
 ## 0.2.0 - 2026-08-08
 
 - Keep the verified Login with ChatGPT app-server transport as the single GPT
