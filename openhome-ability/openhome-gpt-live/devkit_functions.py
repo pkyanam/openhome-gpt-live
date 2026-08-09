@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlparse
 
@@ -55,8 +56,16 @@ DEFAULT_ACTIVE_IDLE_SECONDS = 30
 RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
 WAKE_PREROLL_FRAMES = 25
-WAKE_KWS_THRESHOLD = 1e-25
+WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
+WAKE_CONFIRM_FRAMES = 3
+WAKE_SILENCE_RMS = 20.0
+WAKE_SILENCE_FRAMES = 25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
+PLAYBACK_AUDIBLE_RMS = 20.0
+PLAYBACK_UTTERANCE_GAP_SECONDS = 0.6
+PLAYBACK_INTERRUPT_CUTOFF_SECONDS = 1.2
+REQUEST_SPEECH_RMS = 40.0
+REQUEST_END_SILENCE_SECONDS = 0.8
 GPT_LIVE_READY_STATES = {"idle", "connected", "listening", "listening_intently"}
 
 
@@ -376,21 +385,25 @@ async def _run_live_session(client, config, model, stop_event):
         "assistant_response_seen": False,
         "last_activity": 0.0,
         "last_wake": 0.0,
+        "last_user_speech": 0.0,
         "phrase": config.get("wake_phrase", DEFAULT_WAKE_PHRASE),
         "idle_seconds": int(config.get("active_idle_seconds", DEFAULT_ACTIVE_IDLE_SECONDS)),
     }
     playback_error = {"value": None}
     playback_control = {
         "cutoff": False,
+        "cutoff_until": 0.0,
         "barge_in": False,
         "muted": False,
         "mute_output": _set_playback_muted,
         "started_at": 0.0,
         "last_frame_at": 0.0,
+        "last_audible_at": 0.0,
         "playing_until": 0.0,
     }
     data_channel_holder = {"channel": None}
     live_session_id_holder = {"value": None}
+    seen_data_event_types = set()
 
     class AlsaInputTrack(MediaStreamTrack):
         kind = "audio"
@@ -418,6 +431,7 @@ async def _run_live_session(client, config, model, stop_event):
             )
             if was_active:
                 log.info("GPT Live microphone re-armed after %s", reason)
+            return was_active
 
         async def recv(self):
             if self._pending:
@@ -455,10 +469,18 @@ async def _run_live_session(client, config, model, stop_event):
                         wake_state["assistant_response_seen"] = False
                         wake_state["last_activity"] = now
                         wake_state["last_wake"] = now
+                        wake_state["last_user_speech"] = now
                         self._pending.extend(self._preroll)
                         self._preroll.clear()
                         data = self._pending.popleft()
                         log.info("GPT Live wake phrase detected: %s", wake_state["phrase"])
+                        _maybe_interrupt(
+                            data,
+                            remote_state,
+                            data_channel_holder["channel"],
+                            playback_control,
+                            wake_word=True,
+                        )
                         session_id = live_session_id_holder["value"]
                         if session_id:
                             # Refresh the Mac clock before forwarding this
@@ -480,31 +502,42 @@ async def _run_live_session(client, config, model, stop_event):
                     data = bytes(AUDIO_BYTES)
                 else:
                     now = time.monotonic()
-                    output_is_playing = remote_state["value"] == "speaking"
-                    wake_interrupt = False
-                    if (
-                        output_is_playing
-                        and now - wake_state["last_wake"] >= WAKE_INTERRUPT_GUARD_SECONDS
-                        and now - remote_state["changed_at"] >= WAKE_INTERRUPT_GUARD_SECONDS
-                        and self._wake_detector.process(data)
-                    ):
-                        wake_interrupt = True
-                        wake_state["last_wake"] = now
-                    _maybe_interrupt(
-                        data,
-                        remote_state,
-                        data_channel_holder["channel"],
-                        playback_control,
-                        wake_word=wake_interrupt,
-                    )
-                    if wake_interrupt:
-                        wake_state["last_activity"] = now
-                        session_id = live_session_id_holder["value"]
-                        if session_id:
-                            # The next spoken request may be a clock question.
-                            # Refresh after cutting playback but before its
-                            # content reaches the remote model.
-                            await _refresh_clock_context(client, config, session_id)
+                    if _pcm_rms(data) >= REQUEST_SPEECH_RMS:
+                        wake_state["last_user_speech"] = now
+                    if _should_arm_after_response_audio(wake_state, now):
+                        self.arm_for_next_request("the assistant response began after the request ended")
+                        _write_armed_status(config, model, wake_state["phrase"])
+                        data = bytes(AUDIO_BYTES)
+                    else:
+                        output_is_playing = _output_is_playing(
+                            remote_state,
+                            playback_control,
+                            now,
+                        )
+                        wake_interrupt = False
+                        if (
+                            output_is_playing
+                            and now - wake_state["last_wake"] >= WAKE_INTERRUPT_GUARD_SECONDS
+                            and now - remote_state["changed_at"] >= WAKE_INTERRUPT_GUARD_SECONDS
+                            and self._wake_detector.process(data)
+                        ):
+                            wake_interrupt = True
+                            wake_state["last_wake"] = now
+                        _maybe_interrupt(
+                            data,
+                            remote_state,
+                            data_channel_holder["channel"],
+                            playback_control,
+                            wake_word=wake_interrupt,
+                        )
+                        if wake_interrupt:
+                            wake_state["last_activity"] = now
+                            session_id = live_session_id_holder["value"]
+                            if session_id:
+                                # The next spoken request may be a clock question.
+                                # Refresh after cutting playback but before its
+                                # content reaches the remote model.
+                                await _refresh_clock_context(client, config, session_id)
             frame = AudioFrame(format="s16", layout="mono", samples=AUDIO_SAMPLES)
             frame.planes[0].update(data)
             frame.sample_rate = AUDIO_RATE
@@ -539,7 +572,11 @@ async def _run_live_session(client, config, model, stop_event):
         event = decode_realtime_event(message)
         if not event:
             return
-        if event.get("type") == "state_update":
+        event_type = event.get("type")
+        if event_type not in seen_data_event_types:
+            seen_data_event_types.add(event_type)
+            log.info("GPT Live received data event: %s", event_type)
+        if event_type == "state_update":
             payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
             state = payload.get("new_state")
             if isinstance(state, str):
@@ -558,6 +595,7 @@ async def _run_live_session(client, config, model, stop_event):
                         input_track._wake_detector.reset()
                 if state != "speaking":
                     playback_control["cutoff"] = False
+                    playback_control["cutoff_until"] = 0.0
                 if _should_arm_after_response(
                     previous_state,
                     state,
@@ -598,11 +636,16 @@ async def _run_live_session(client, config, model, stop_event):
     @pc.on("track")
     def on_track(track):
         if track.kind == "audio":
+            def on_remote_speech_started():
+                if wake_state["active"]:
+                    wake_state["assistant_response_seen"] = True
+
             task = asyncio.create_task(_play_remote_audio(
                 track,
                 config.get("playback_device", "default"),
                 AudioResampler,
                 playback_control,
+                on_remote_speech_started,
             ))
             playback_tasks.add(task)
 
@@ -675,13 +718,25 @@ async def _run_live_session(client, config, model, stop_event):
         raise completed_error
 
 
-async def _play_remote_audio(track, device, AudioResampler, playback_control):
+async def _play_remote_audio(
+    track,
+    device,
+    AudioResampler,
+    playback_control,
+    on_remote_speech_started=None,
+):
     process = _open_playback_process(device)
     resampler = AudioResampler(format="s16", layout="mono", rate=AUDIO_RATE)
     try:
         while True:
             frame = await track.recv()
             for converted in resampler.resample(frame):
+                now = time.monotonic()
+                if (
+                    playback_control["cutoff"]
+                    and now >= playback_control.get("cutoff_until", 0.0)
+                ):
+                    playback_control["cutoff"] = False
                 if playback_control["cutoff"]:
                     playback_control["playing_until"] = 0.0
                     # Keep the sink input open while discarding cancelled
@@ -691,15 +746,22 @@ async def _play_remote_audio(track, device, AudioResampler, playback_control):
                 if playback_control["muted"]:
                     _set_playback_muted(False)
                     playback_control["muted"] = False
-                now = time.monotonic()
-                if now - playback_control["last_frame_at"] >= 0.3:
+                byte_count = converted.samples * 2
+                pcm = bytes(converted.planes[0])[:byte_count]
+                audible = _pcm_rms(pcm) >= PLAYBACK_AUDIBLE_RMS
+                if audible and now - playback_control.get(
+                    "last_audible_at", 0.0
+                ) >= PLAYBACK_UTTERANCE_GAP_SECONDS:
                     playback_control["started_at"] = now
+                    if callable(on_remote_speech_started):
+                        on_remote_speech_started()
                 playback_control["last_frame_at"] = now
-                playback_control["playing_until"] = now + 0.2
+                if audible:
+                    playback_control["last_audible_at"] = now
+                    playback_control["playing_until"] = now + 0.2
                 if process is None:
                     process = _open_playback_process(device)
-                byte_count = converted.samples * 2
-                await asyncio.to_thread(process.stdin.write, bytes(converted.planes[0])[:byte_count])
+                await asyncio.to_thread(process.stdin.write, pcm)
     finally:
         if playback_control["muted"]:
             _set_playback_muted(False)
@@ -1142,27 +1204,105 @@ class WakePhraseDetector:
             from pocketsphinx import Decoder
         except ImportError as error:
             raise RuntimeError("PocketSphinx was not installed for offline wake-word detection.") from error
-        self._decoder = Decoder(
-            keyphrase=phrase,
-            kws_threshold=WAKE_KWS_THRESHOLD,
-            samprate=16_000,
-            logfn=os.devnull,
-        )
+        self._aliases = _wake_phrase_aliases(phrase)
+        grammar_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".jsgf",
+                encoding="utf-8",
+                delete=False,
+            ) as grammar_file:
+                grammar_file.write(
+                    "#JSGF V1.0; grammar wake; public <wake> = "
+                    + " | ".join(self._aliases)
+                    + ";"
+                )
+                grammar_path = grammar_file.name
+            self._decoder = Decoder(
+                jsgf=grammar_path,
+                samprate=16_000,
+                logfn=os.devnull,
+            )
+        finally:
+            if grammar_path:
+                Path(grammar_path).unlink(missing_ok=True)
+        self._confirmation_frames = 0
+        self._quiet_frames = 0
+        self._frames_seen = 0
         self._decoder.start_utt()
 
     def reset(self):
         self._decoder.end_utt()
         self._decoder.start_utt()
+        self._confirmation_frames = 0
+        self._quiet_frames = 0
 
     def process(self, pcm_48k):
+        self._frames_seen += 1
+        if self._frames_seen == 1:
+            log.info("GPT Live wake detector is receiving microphone audio")
+        elif self._frames_seen == 250:
+            log.info("GPT Live wake detector microphone stream is continuous")
+        self._quiet_frames, should_reset = _advance_wake_silence(
+            self._quiet_frames,
+            pcm_48k,
+        )
+        if should_reset:
+            # Grammar decoding is utterance-oriented. Without silence
+            # segmentation a decoder that has been armed for roughly a minute
+            # stops recognizing an otherwise clear wake phrase.
+            self.reset()
         pcm_16k = _downsample_48k_to_16k(pcm_48k)
         self._decoder.process_raw(pcm_16k, False, False)
         hypothesis = self._decoder.hyp()
         if hypothesis is None:
+            self._confirmation_frames = 0
             return False
         heard = hypothesis.hypstr.strip().lower()
-        self.reset()
-        return bool(heard)
+        previous_confirmation_frames = self._confirmation_frames
+        self._confirmation_frames, confirmed = _advance_wake_confirmation(
+            self._confirmation_frames,
+            heard,
+            float(getattr(hypothesis, "best_score", 0.0)),
+            self._aliases,
+        )
+        if previous_confirmation_frames == 0 and self._confirmation_frames == 1:
+            log.info("GPT Live wake candidate: %s (score %.3f)", heard, hypothesis.best_score)
+        if confirmed:
+            self.reset()
+        return confirmed
+
+
+def _wake_phrase_aliases(phrase):
+    normalized = " ".join(str(phrase).replace("-", " ").lower().split())
+    aliases = [normalized]
+    if normalized == "juniper":
+        # PocketSphinx's US acoustic model commonly renders Juniper as these
+        # close word sequences, especially for distant or synthesized speech.
+        aliases.extend(("june it for", "june upper", "june a per"))
+    return tuple(dict.fromkeys(aliases))
+
+
+def _advance_wake_confirmation(frame_count, heard, score, aliases):
+    if heard not in aliases or score < WAKE_GRAMMAR_SCORE_THRESHOLD:
+        return 0, False
+    frame_count += 1
+    if frame_count < WAKE_CONFIRM_FRAMES:
+        return frame_count, False
+    return 0, True
+
+
+def _advance_wake_silence(frame_count, pcm):
+    samples = array.array("h")
+    samples.frombytes(pcm)
+    rms = math.sqrt(sum(sample * sample for sample in samples) / max(1, len(samples)))
+    if rms > WAKE_SILENCE_RMS:
+        return 0, False
+    frame_count += 1
+    if frame_count < WAKE_SILENCE_FRAMES:
+        return frame_count, False
+    return 0, True
 
 
 def _select_capture_audio(data, device):
@@ -1188,13 +1328,17 @@ def _downsample_48k_to_16k(data):
 
 
 def _should_return_to_wake_mode(wake_state, remote_state, now=None):
-    if (
-        not wake_state["active"]
-        or remote_state["value"] not in GPT_LIVE_READY_STATES
-    ):
+    if not wake_state["active"]:
         return False
     now = time.monotonic() if now is None else now
     return now - wake_state["last_activity"] >= wake_state["idle_seconds"]
+
+
+def _should_arm_after_response_audio(wake_state, now=None):
+    if not wake_state.get("active") or not wake_state.get("assistant_response_seen"):
+        return False
+    now = time.monotonic() if now is None else now
+    return now - wake_state.get("last_user_speech", now) >= REQUEST_END_SILENCE_SECONDS
 
 
 def _should_arm_after_response(
@@ -1247,13 +1391,9 @@ def _write_armed_status(config, model, phrase):
 
 
 def _maybe_interrupt(data, state, channel, playback_control=None, wake_word=False):
-    """Mirror the merged browser client's local barge-in signal."""
+    """Cut output locally while the always-open Live microphone carries barge-in."""
     now = time.monotonic()
-    if (
-        state["value"] != "speaking"
-        or channel is None
-        or channel.readyState != "open"
-    ):
+    if not _output_is_playing(state, playback_control, now):
         state["hot_frames"] = 0
         return
     # Every request requires the wake phrase. Using raw volume here caused the
@@ -1263,26 +1403,41 @@ def _maybe_interrupt(data, state, channel, playback_control=None, wake_word=Fals
     if not wake_word:
         state["hot_frames"] = 0
         return
-    samples = array.array("h")
-    samples.frombytes(data)
-    rms = math.sqrt(sum(sample * sample for sample in samples) / max(1, len(samples)))
+    rms = _pcm_rms(data)
     if now - state["last_interrupt"] >= 0.8:
-        event = {"type": "action_request", "payload": {"action": "stop_speaking"}}
-        channel.send(json.dumps({"type": "data_message", "data": json.dumps(event)}))
         if playback_control is not None:
             playback_control["cutoff"] = True
+            playback_control["cutoff_until"] = now + PLAYBACK_INTERRUPT_CUTOFF_SECONDS
             playback_control["barge_in"] = True
             mute_output = playback_control.get("mute_output")
             if callable(mute_output):
                 mute_output(True)
                 playback_control["muted"] = True
         log.info(
-            "GPT Live barge-in detected at %.1f RMS%s; cutting local playback",
+            "GPT Live barge-in detected at %.1f RMS%s; cutting local playback while Live hears the replacement request",
             rms,
             " with wake phrase" if wake_word else "",
         )
         state["last_interrupt"] = now
         state["hot_frames"] = 0
+
+
+def _output_is_playing(state, playback_control=None, now=None):
+    if state.get("value") == "speaking":
+        return True
+    if not playback_control:
+        return False
+    now = time.monotonic() if now is None else now
+    return (
+        now < playback_control.get("playing_until", 0.0)
+        and now - playback_control.get("started_at", now) >= WAKE_INTERRUPT_GUARD_SECONDS
+    )
+
+
+def _pcm_rms(data):
+    samples = array.array("h")
+    samples.frombytes(data)
+    return math.sqrt(sum(sample * sample for sample in samples) / max(1, len(samples)))
 
 
 def _require_audio_commands():

@@ -28,3 +28,4 @@ jobs:
           path: |
             dist/openhome-gpt-live-ability.zip
             dist/openhome-gpt-live-ability.zip.sha256
+            dist/openhome-gpt-live-release.zip

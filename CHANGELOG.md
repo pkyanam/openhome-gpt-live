@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.6 - 2026-08-08
+
+- Fix the OpenHome release uploader to publish the actual new Ability code
+  through the dashboard's flat-ZIP release endpoint while preserving the
+  existing Ability id and linked keys.
+- Restore the background-provider class name required by the firmware loader.
+- Keep the offline Juniper detector responsive after long armed periods,
+  tighten false-wake rejection, and verify positive/negative room audio on an
+  official DevKit running firmware 1.0.8.
+- Re-arm from observed remote audio plus near-end request silence when `/wm`
+  omits data-channel state events, requiring Juniper for every request without
+  clipping a one-breath prompt.
+- Preserve the Live conversation during local wake-word barge-in, add a safe
+  firmware-1.0.8 cache preparation command, and publish both OpenHome ZIP
+  formats in CI.
+- Document the one-time Activity diagnostics bootstrap required because
+  firmware 1.0.8 does not reliably invoke Local Ability background providers
+  when the Agent restarts.
+
 ## 0.2.5 - 2026-08-08
 
 - Preserve the open microphone gate and queued replacement request when the

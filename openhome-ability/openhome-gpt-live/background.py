@@ -4,7 +4,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
-class OpenHomeGPTLiveBackgroundCapability(MatchingCapability):
+class OpenhomeGptLiveCapabilityBackground(MatchingCapability):
     """Keep GPT Live active for the complete OpenHome Personality session."""
 
     worker: AgentWorker = None

@@ -24,6 +24,24 @@ unzip -l dist/openhome-gpt-live-ability.zip
 Every entry must be under `openhome-gpt-live/`, including
 `openhome-gpt-live/__init__.py`.
 
+That rooted archive is for creating a new Ability. The build also produces
+`dist/openhome-gpt-live-release.zip`, whose files are at the ZIP root because
+OpenHome's existing-release editor uses a different archive contract.
+
+## Sync says complete but the speaker still runs old code
+
+Firmware 1.0.8 can keep an existing Local Ability directory instead of
+replacing it. Preserve the cloud Ability and pairing, then run on the host:
+
+```bash
+cd ~/.openhome-gpt-live
+bun run ability:prepare-sync
+```
+
+Reconnect the DevKit in OpenHome, tap **Sync Abilities**, and choose **Restart
+Agent**. The command moves only the cached `openhome_gpt_live` device folder to
+a timestamped backup so Sync can install the current cloud release.
+
 ## “Installed Ability does not exist”
 
 The Agent has an installed record pointing at an Ability object that was
@@ -80,7 +98,9 @@ Check in order:
 3. **OpenHome GPT Live** is installed and enabled on the active Agent.
 4. Both required Third Party Keys are linked to that Ability.
 5. You tapped **Sync Abilities** and **Restart Agent** after the latest upload.
-6. `/setup` says the DevKit is live and ChatGPT is connected.
+6. On firmware 1.0.8, you sent `gpt live diagnostics` once in the dashboard's
+   Activity chat to install/start the persistent worker.
+7. `/setup` says the DevKit is live and ChatGPT is connected.
 
 Say the wake phrase as part of one request: “Juniper, explain photosynthesis,”
 not “Juniper” followed by a long pause.
@@ -184,5 +204,7 @@ default pipeline answer ambient speech.
 ## Firmware version
 
 The integration has been exercised on OpenHome firmware 1.0.8. Firmware 1.1.0
-is not a prerequisite. Do not reflash solely for this project when 1.0.8 is
-otherwise healthy.
+is not a prerequisite. On 1.0.8, Local Ability background providers are not
+reliably invoked by Agent restart, so use the one-time Activity diagnostic to
+bootstrap the enabled systemd worker. Do not reflash solely for this project
+when 1.0.8 is otherwise healthy.

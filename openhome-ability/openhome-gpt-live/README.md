@@ -7,8 +7,9 @@ worker, monitors it, and restarts failed or expired sessions.
 
 PocketSphinx detects the `Juniper` wake phrase locally. While armed, the
 WebRTC microphone track contains silence. Real microphone audio is forwarded
-only after the wake phrase, and the worker re-arms after each completed answer.
-Every new request and interruption requires `Juniper`.
+only after the wake phrase. The worker re-arms when remote answer audio begins
+after the near-end request falls silent, with a timeout fallback for failed
+turns. Every new request and interruption requires `Juniper`.
 
 The default official-DevKit path selects the VoiceHAT's useful capture channel
 and uses PipeWire WebRTC acoustic echo cancellation. `aiortc` carries audio for
@@ -54,8 +55,10 @@ built-in OpenHome STT/TTS pipeline exists in parallel. Enable the built-in Agent
 wake word and change it to a reserved recovery phrase such as `openhome fallback
 seven nine`. GPT Live continues to use the offline Juniper gate.
 
-The required trigger phrase `gpt live diagnostics` is only a recovery check. It
-reports whether the worker runs; normal conversation never uses that trigger.
+The required trigger phrase `gpt live diagnostics` is a one-time firmware-1.0.8
+bootstrap and recovery check. Send it from the OpenHome Activity chat after the
+first Sync/Agent restart; it installs or starts the persistent worker and
+reports status. Normal conversation never uses that trigger.
 
 Disable the Ability and restart the Agent to stop the provider. If default
 audio fails, invoke `audio_devices` in the Ability editor and configure the

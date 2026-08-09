@@ -11,6 +11,7 @@ ABILITY_NAME = "openhome-gpt-live"
 ABILITY_DIR = PROJECT_DIR / "openhome-ability" / ABILITY_NAME
 OUTPUT_FILE = PROJECT_DIR / "dist" / "openhome-gpt-live-ability.zip"
 CHECKSUM_FILE = PROJECT_DIR / "dist" / "openhome-gpt-live-ability.zip.sha256"
+RELEASE_FILE = PROJECT_DIR / "dist" / "openhome-gpt-live-release.zip"
 ABILITY_FILES = (
     "__init__.py",
     "main.py",
@@ -34,6 +35,18 @@ def main():
             info.external_attr = 0o100644 << 16
             archive.writestr(info, data)
 
+    # OpenHome has two different ZIP contracts. Creating an Ability requires a
+    # single directory at the archive root, while updating the current release
+    # through validate/release-code expects the Ability files at the ZIP root.
+    with ZipFile(RELEASE_FILE, "w", compression=ZIP_DEFLATED) as archive:
+        for filename in ABILITY_FILES:
+            source = ABILITY_DIR / filename
+            data = source.read_bytes()
+            info = ZipInfo(filename, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, data)
+
     with ZipFile(OUTPUT_FILE) as archive:
         names = archive.namelist()
         roots = {name.split("/", 1)[0] for name in names}
@@ -42,11 +55,17 @@ def main():
         if set(names) != {f"{ABILITY_NAME}/{name}" for name in ABILITY_FILES}:
             raise RuntimeError(f"Ability archive contains unexpected files: {names}")
 
+    with ZipFile(RELEASE_FILE) as archive:
+        names = archive.namelist()
+        if set(names) != set(ABILITY_FILES):
+            raise RuntimeError(f"Ability release archive contains unexpected files: {names}")
+
     digest = sha256(OUTPUT_FILE.read_bytes()).hexdigest()
     CHECKSUM_FILE.write_text(f"{digest}  {OUTPUT_FILE.name}\n", encoding="utf-8")
 
     print(OUTPUT_FILE)
     print(CHECKSUM_FILE)
+    print(RELEASE_FILE)
 
 
 if __name__ == "__main__":
