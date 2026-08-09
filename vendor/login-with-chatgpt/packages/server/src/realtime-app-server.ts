@@ -705,6 +705,12 @@ export class ChatGPTRealtimeAppServerSession {
       this.emit({ type: "handoff.deduplicated", transcript });
       return;
     }
+    if (this.activeTasks.size >= MAX_PARALLEL_HANDOFFS) {
+      void this.speak(
+        `Codex is already running ${MAX_PARALLEL_HANDOFFS} tasks. Please try that request again after one finishes.`,
+      ).catch(() => this.emit({ type: "error", message: "The Codex capacity notice could not be spoken." }));
+      return;
+    }
     this.recentHandoffs.set(normalizedTranscript, now);
     if (kind === "media") this.lastMediaHandoffAt = now;
     const task: DelegatedTask = {
@@ -719,15 +725,11 @@ export class ChatGPTRealtimeAppServerSession {
       actionCount: 0,
     };
     this.emit({ type: "handoff", transcript });
-
-    if (this.activeTasks.size >= MAX_PARALLEL_HANDOFFS) {
-      this.recentHandoffs.delete(normalizedTranscript);
-      void this.speak(
-        `Codex is already running ${MAX_PARALLEL_HANDOFFS} tasks. Please try that request again after one finishes.`,
-      ).catch(() => this.emit({ type: "error", message: "The Codex capacity notice could not be spoken." }));
-      return;
-    }
     this.activeTasks.set(task.id, task);
+    task.timeout = setTimeout(
+      () => void this.timeoutTask(task),
+      this.timeoutForTask(task),
+    );
     this.publishTaskState();
     void this.startDelegatedTask(task);
   }
@@ -828,6 +830,7 @@ export class ChatGPTRealtimeAppServerSession {
     const home = this.home;
     try {
       if (!startOptions || !home) throw new Error("Realtime execution is not initialized.");
+      if (!this.activeTasks.has(task.id)) return;
       const threadResponse = await this.expectResult("thread/start", {
         cwd: this.options.cwd ?? home,
         ephemeral: true,
@@ -841,6 +844,7 @@ export class ChatGPTRealtimeAppServerSession {
       });
       const thread = asRecord(asRecord(threadResponse["result"])?.["thread"]);
       if (typeof thread?.["id"] !== "string") throw new Error("App-server returned no task thread id.");
+      if (!this.activeTasks.has(task.id)) return;
       task.threadId = thread["id"];
       this.tasksByThreadId.set(task.threadId, task);
 
@@ -850,10 +854,10 @@ export class ChatGPTRealtimeAppServerSession {
       });
       const turn = asRecord(asRecord(turnResponse["result"])?.["turn"]);
       if (typeof turn?.["id"] === "string") task.turnId = turn["id"];
-      task.timeout = setTimeout(
-        () => void this.timeoutTask(task),
-        this.timeoutForTask(task),
-      );
+      if (!this.activeTasks.has(task.id)) {
+        if (task.threadId && task.turnId) void this.interruptTurn(task.threadId, task.turnId);
+        return;
+      }
       this.emit({
         type: "handoff.started",
         taskId: task.id,
@@ -863,6 +867,7 @@ export class ChatGPTRealtimeAppServerSession {
       this.acknowledgeHandoff(task.transcript);
       this.publishTaskState();
     } catch {
+      if (!this.activeTasks.has(task.id)) return;
       this.recentHandoffs.delete(task.normalizedTranscript);
       this.finalizeTask(task, "failed", true);
       await this.speak("I couldn’t start that Codex task. Please try again.").catch(() => {});
@@ -1068,7 +1073,7 @@ function delegatedTaskKind(value: string): DelegatedTask["kind"] {
   const normalized = normalizeTranscript(value);
   const mediaAction = /\b(play|stream|listen|watch|put on)\b/.test(normalized);
   const mediaTarget = /\b(song|music|album|playlist|video|trailer|youtube|spotify|soundcloud)\b/.test(normalized);
-  if (mediaAction || (/\bqueue\b/.test(normalized) && mediaTarget)) return "media";
+  if ((mediaAction || /\bqueue\b/.test(normalized)) && mediaTarget) return "media";
   if (/\b(browser|tab|window|helium|chrome|safari|open|launch|quit|click|select|scroll)\b/.test(normalized)) {
     return "computer";
   }
