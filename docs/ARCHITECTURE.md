@@ -82,6 +82,13 @@ The host classifies every native handoff before Codex accepts it:
 - File, workspace, application, OpenHome, external-action, and explicit “use
   Codex” requests enter the delegated Codex lane. A local action wins when a
   request contains both research and a mutation.
+- YouTube, Spotify, Apple Music, songs, playlists, and playback controls enter
+  the single-flight media lane before native or search fallback.
+
+The DevKit's server-owned wake phrase is removed before this classification.
+Each handoff receives exactly one lane owner. Repeated native fallback handoffs
+are suppressed without speech, preventing a native refusal from racing a search
+or Codex result.
 
 The bridge uses client-managed handoffs, so web search does not create a Codex
 turn. The search lane acknowledges immediately, runs independently, and sends

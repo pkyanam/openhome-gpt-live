@@ -42,6 +42,12 @@ controlled positive wake test and one no-wake negative test pass.
 - Conversation, explanations, and clock: GPT Live.
 - Current facts and simple searches: OpenAI subscription web search.
 - Files, code, projects, OpenHome actions, and computer control: Codex.
+- Media playback and controls for YouTube, Spotify, and Apple Music: Codex's
+  single-flight media lane.
+
+The configured wake phrase is stripped before routing. Every accepted handoff
+has one owner. Repeated native fallbacks are silent and must never race a search
+or Codex completion.
 
 Codex tasks run in isolated threads, up to four in parallel. GPT Live should
 acknowledge every handoff promptly and announce each completion. Search must

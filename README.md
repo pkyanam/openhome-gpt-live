@@ -183,7 +183,7 @@ restores those streams.
 | --- | --- |
 | Conversation, explanations, date/time | GPT Live |
 | Current facts, news, weather, web searches | OpenAI web search |
-| Files, code, projects, OpenHome actions, computer control | Codex |
+| Files, code, projects, OpenHome actions, computer and media-app control | Codex |
 
 Search and Codex work run independently. Each Codex request starts immediately
 in its own isolated thread, up to four at once. GPT Live acknowledges each start
@@ -192,6 +192,12 @@ Browser media is intentionally single-flight: one request may reuse or open one
 tab and start one stream. Completion speech ends the task immediately. Media and
 computer-control work also has bounded action counts and hard deadlines so an
 agent cannot click indefinitely.
+
+Each handoff has one owner. A native answer cannot also become a search or Codex
+task, repeated fallback handoffs stay silent, and the configured wake name is
+removed before routing. Commands such as “play a song on YouTube,” “control
+Spotify,” or “pause Apple Music” always use the media lane rather than the web
+search fallback.
 
 ## Voices, wake names, and access
 

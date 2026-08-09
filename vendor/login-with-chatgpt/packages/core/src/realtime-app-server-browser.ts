@@ -12,6 +12,19 @@ export type ChatGPTRealtimeAppServerEvent =
   | { type: "session.started" }
   | { type: "session.closed" }
   | { type: "handoff"; transcript: string }
+  | { type: "handoff.started"; taskId: string; transcript: string; activeCount: number }
+  | { type: "handoff.deduplicated"; transcript: string }
+  | { type: "handoff.redirected"; transcript: string; destination: "native" }
+  | { type: "search.started"; taskId: string; transcript: string }
+  | { type: "search.completed"; taskId: string; transcript: string; status: "completed" | "failed" }
+  | {
+      type: "handoff.completed";
+      taskId: string;
+      transcript: string;
+      status: "completed" | "failed" | "interrupted";
+      fallbackSpeech: boolean;
+      activeCount: number;
+    }
   | { type: "tool.running"; callId: string; name: string }
   | { type: "tool.completed"; callId: string; name: string }
   | {
@@ -26,7 +39,7 @@ export type ChatGPTRealtimeAppServerEvent =
 
 export type ChatGPTRealtimeAppServerSessionOptions = Pick<
   ChatGPTRealtimeSessionOptions,
-  "voice" | "model"
+  "voice" | "model" | "wakePhrase"
 >;
 
 export interface ConnectChatGPTRealtimeAppServerOptions
@@ -210,7 +223,36 @@ export function parseChatGPTRealtimeAppServerEvent(
     case "keepalive":
       return value as ChatGPTRealtimeAppServerEvent;
     case "handoff":
+    case "handoff.deduplicated":
       return typeof value["transcript"] === "string"
+        ? value as ChatGPTRealtimeAppServerEvent
+        : undefined;
+    case "handoff.redirected":
+      return typeof value["transcript"] === "string" && value["destination"] === "native"
+        ? value as ChatGPTRealtimeAppServerEvent
+        : undefined;
+    case "handoff.started":
+      return typeof value["taskId"] === "string"
+        && typeof value["transcript"] === "string"
+        && typeof value["activeCount"] === "number"
+        ? value as ChatGPTRealtimeAppServerEvent
+        : undefined;
+    case "search.started":
+      return typeof value["taskId"] === "string" && typeof value["transcript"] === "string"
+        ? value as ChatGPTRealtimeAppServerEvent
+        : undefined;
+    case "search.completed":
+      return typeof value["taskId"] === "string"
+        && typeof value["transcript"] === "string"
+        && (value["status"] === "completed" || value["status"] === "failed")
+        ? value as ChatGPTRealtimeAppServerEvent
+        : undefined;
+    case "handoff.completed":
+      return typeof value["taskId"] === "string"
+        && typeof value["transcript"] === "string"
+        && ["completed", "failed", "interrupted"].includes(String(value["status"]))
+        && typeof value["fallbackSpeech"] === "boolean"
+        && typeof value["activeCount"] === "number"
         ? value as ChatGPTRealtimeAppServerEvent
         : undefined;
     case "tool.running":

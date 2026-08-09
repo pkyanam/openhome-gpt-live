@@ -38,6 +38,8 @@ export interface ChatGPTRealtimeSessionOptions {
   parentMessageId?: string;
   timezone?: string;
   timezoneOffsetMinutes?: number;
+  /** Routing-only wake phrase for app-server integrations; ignored by the direct ChatGPT edge payload. */
+  wakePhrase?: string;
   /**
    * Reserved for ChatGPT's first-party device tools. `/wm` rejects arbitrary
    * application function IDs.
@@ -51,6 +53,7 @@ export interface ChatGPTRealtimeSessionOptions {
 const REALTIME_SESSION_OPTION_KEYS = new Set<keyof ChatGPTRealtimeSessionOptions>([
   "transport", "voice", "voiceMode", "model", "advancedModel", "language",
   "conversationId", "parentMessageId", "timezone", "timezoneOffsetMinutes",
+  "wakePhrase",
   "clientTools", "conversationMode", "historyAndTrainingDisabled",
   "enableMessageStreaming",
 ]);
@@ -65,7 +68,7 @@ export function parseChatGPTRealtimeSessionOptions(
       throw new TypeError(`Unsupported Realtime session option: ${key}`);
     }
   }
-  for (const key of ["voice", "model", "advancedModel", "parentMessageId", "timezone"] as const) {
+  for (const key of ["voice", "model", "advancedModel", "parentMessageId", "timezone", "wakePhrase"] as const) {
     if (value[key] !== undefined && typeof value[key] !== "string") {
       throw new TypeError(`\`session.${key}\` must be a string.`);
     }

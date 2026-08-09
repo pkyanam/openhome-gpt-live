@@ -12,6 +12,7 @@ import { OpenHomeClient } from "./openhome-client.ts";
 import { createOpenHomeToolPolicy } from "./openhome-tools.ts";
 import { createCodexControlPolicy } from "./codex-control.ts";
 import { parseOpenAISearchEvents } from "./openai-search.ts";
+import { classifyCodexTask, isMediaControlRequest } from "./handoff-routing.ts";
 import { routeVoiceRequest } from "./voice-routing.ts";
 import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
 
@@ -94,8 +95,9 @@ auth = createChatGPTHandler({
         ? { defaultModel: process.env.LWC_DEFAULT_MODEL.trim() }
         : {}),
       reasoningEffort: "low",
-      handoffAcknowledgement:
-        "Got it. I started that with Codex. I’ll tell you as soon as it finishes, and you can keep talking to me while it works.",
+      handoffAcknowledgement: (transcript) => isMediaControlRequest(transcript)
+        ? "Starting that now."
+        : "I started that with Codex. I’ll tell you when it finishes.",
       searchAcknowledgement:
         "I’m searching OpenAI now. You can keep talking while I check.",
       executeSearch: ({ request, transcript }) => executeSubscriptionSearch(request, transcript),
@@ -104,6 +106,7 @@ auth = createChatGPTHandler({
         console.log(`GPT Live routed a request to ${destination}.`);
         return destination;
       },
+      classifyHandoff: classifyCodexTask,
       executionInstructions:
         "You are the execution side of an OpenHome realtime voice assistant. " +
         "Native GPT Live owns ordinary conversation, memory, and general knowledge. The OpenHome bridge intercepts " +
@@ -125,7 +128,9 @@ auth = createChatGPTHandler({
             "workspace-write tools. For macOS control or access outside that workspace, use " +
             "codex_prepare_mac_task and wait for approval in the paired browser control page. ") +
         "Never claim a mutation completed when it is pending UI confirmation. " +
-        "After finishing, call speak_to_user exactly once with a concise spoken result.",
+        "After finishing, call speak_to_user exactly once with a concise spoken result. For media controls, state only " +
+        "the final outcome, such as 'Spotify is playing the requested song.' Do not begin the completion with 'got it' " +
+        "or repeat the original request.",
       realtimePrompt:
         "You are an OpenHome voice assistant. Keep responses concise, natural, and interruptible. " +
         "Use GPT Live directly for ordinary conversation, general knowledge, and memory. For current information, " +
@@ -144,7 +149,9 @@ auth = createChatGPTHandler({
           : "Outside-workspace Mac control must use the confirmed Codex Mac tool. ") +
         "The bridge acknowledges a Codex handoff after execution actually starts. Do not add vague filler such " +
         "as 'checking' or 'one moment'. Do not independently perform or answer the same delegated task, but remain " +
-        "available for new conversation and follow-up messages while Codex works in the background. Runtime developer " +
+        "silent after creating a handoff until the bridge supplies an acknowledgement or result. Never claim that " +
+        "native web search, computer control, or Codex is unavailable after creating a handoff. " +
+        "Stay available for new conversation and follow-up messages while Codex works in the background. Runtime developer " +
         "updates tell you how many independent Codex tasks are running. While they run, answer ordinary requests " +
         "directly and send web-search requests through the independent OpenAI search handoff; never submit the same handoff " +
         "twice. Media playback is single-flight, so never retry or restate a media handoff after the bridge accepts it. " +
@@ -171,7 +178,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.5" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.6" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

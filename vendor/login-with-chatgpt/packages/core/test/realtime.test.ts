@@ -23,6 +23,7 @@ describe("ChatGPT Realtime", () => {
     const advanced = buildChatGPTRealtimeSession({
       voice: "ember",
       language: "fr-FR",
+      wakePhrase: "lara",
     });
     expect(advanced).toMatchObject({
       voice: "ember",
@@ -33,6 +34,7 @@ describe("ChatGPT Realtime", () => {
     expect(advanced.voice_session_id).toBe(advanced.voice_status_request_id);
     expect(buildChatGPTRealtimeSession({ language: "EN-us" }).language_code).toBe("en-US");
     expect(advanced.client_tools).toEqual([]);
+    expect(advanced).not.toHaveProperty("wakePhrase");
     expect(advanced).toMatchObject({
       backend_reasoning_effort: "high",
       chat_mode: "chat",
@@ -76,15 +78,18 @@ describe("ChatGPT Realtime", () => {
     expect(parseChatGPTRealtimeSessionOptions({
       transport: "wm",
       voice: "vale",
+      wakePhrase: "lara",
       language: null,
       conversationMode: { kind: "primary_assistant" },
     })).toEqual({
       transport: "wm",
       voice: "vale",
+      wakePhrase: "lara",
       language: null,
       conversationMode: { kind: "primary_assistant" },
     });
     expect(() => parseChatGPTRealtimeSessionOptions({ voice: 4 })).toThrow("session.voice");
+    expect(() => parseChatGPTRealtimeSessionOptions({ wakePhrase: 4 })).toThrow("session.wakePhrase");
     expect(() => parseChatGPTRealtimeSessionOptions({ conversationMode: [] })).toThrow("conversationMode");
     expect(() => parseChatGPTRealtimeSessionOptions({ privateFlag: true })).toThrow("Unsupported");
   });
@@ -248,6 +253,26 @@ describe("ChatGPT Realtime", () => {
   });
 
   test("parses desktop-style app-server lifecycle events", () => {
+    expect(parseChatGPTRealtimeAppServerEvent({
+      type: "handoff.started",
+      taskId: "task-1",
+      transcript: "play a song",
+      activeCount: 1,
+    })).toMatchObject({ type: "handoff.started", taskId: "task-1", activeCount: 1 });
+    expect(parseChatGPTRealtimeAppServerEvent({
+      type: "search.completed",
+      taskId: "search-1",
+      transcript: "today's news",
+      status: "completed",
+    })).toMatchObject({ type: "search.completed", status: "completed" });
+    expect(parseChatGPTRealtimeAppServerEvent({
+      type: "handoff.completed",
+      taskId: "task-1",
+      transcript: "play a song",
+      status: "completed",
+      fallbackSpeech: false,
+      activeCount: 0,
+    })).toMatchObject({ type: "handoff.completed", status: "completed", activeCount: 0 });
     expect(parseChatGPTRealtimeAppServerEvent({
       type: "tool.pending_confirmation",
       callId: "call-1",

@@ -13,10 +13,15 @@ describe("speaker voice routing", () => {
   test("keeps local mutations in Codex even when research is involved", () => {
     expect(routeVoiceRequest("search the web and save the results in my workspace")).toBe("codex");
     expect(routeVoiceRequest("use Codex to create a game on my Mac")).toBe("codex");
+    expect(routeVoiceRequest("play a song on YouTube")).toBe("codex");
+    expect(routeVoiceRequest("control Spotify")).toBe("codex");
+    expect(routeVoiceRequest("search Spotify and play the first matching song")).toBe("codex");
+    expect(routeVoiceRequest("play today's top hits on Spotify")).toBe("codex");
   });
 
   test("keeps conversation and clock questions in GPT Live", () => {
     expect(routeVoiceRequest("explain photosynthesis in five sentences")).toBe("native");
     expect(routeVoiceRequest("what is the exact date and time right now")).toBe("native");
+    expect(routeVoiceRequest("what is Spotify")).toBe("native");
   });
 });

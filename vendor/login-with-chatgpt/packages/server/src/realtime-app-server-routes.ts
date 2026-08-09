@@ -17,7 +17,7 @@ import { readTextBody } from "./request-body.ts";
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_QUEUED_EVENTS = 256;
 const APP_SERVER_SESSION_KEYS = new Set([
-  "voice", "model", "timezone", "timezoneOffsetMinutes",
+  "voice", "model", "timezone", "timezoneOffsetMinutes", "wakePhrase",
 ]);
 
 export interface RealtimeAppServerToolContext extends RealtimeToolContext {
@@ -86,6 +86,8 @@ export interface RealtimeAppServerPolicy {
   searchAcknowledgement?: string | ((transcript: string) => string | undefined);
   /** Routes requests away from the automatic Codex turn when appropriate. */
   routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search";
+  /** Classifies accepted Codex work for task-specific execution limits. */
+  classifyHandoff?: (transcript: string) => "general" | "computer" | "media";
   /** Directory exposed to the delegated Codex thread. */
   cwd?: string;
   /** Defaults to read-only. `workspace-write` confines mutations to `cwd`. */
@@ -107,7 +109,7 @@ interface ManagedSession {
 
 interface RealtimePayload {
   sdp: string;
-  session?: ChatGPTRealtimeSessionOptions;
+  session?: ChatGPTRealtimeSessionOptions & { wakePhrase?: string };
 }
 
 type RouteMethods = Partial<Record<string, (request: Request) => Promise<Response>>>;
@@ -245,6 +247,7 @@ export function createRealtimeAppServerRoutes(options: {
           ? { searchAcknowledgement: policy.searchAcknowledgement }
           : {}),
         ...(policy.routeHandoff ? { routeHandoff: policy.routeHandoff } : {}),
+        ...(policy.classifyHandoff ? { classifyHandoff: policy.classifyHandoff } : {}),
         ...(policy.cwd ? { cwd: policy.cwd } : {}),
         ...(policy.sandbox ? { sandbox: policy.sandbox } : {}),
       };
@@ -282,6 +285,7 @@ export function createRealtimeAppServerRoutes(options: {
         answer = await session.start({
           sdp: payload.sdp,
           voice: payload.session?.voice,
+          wakePhrase: payload.session?.wakePhrase,
           model,
           reasoningEffort: policy.reasoningEffort,
           timezone: payload.session?.timezone

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.6 - 2026-08-09
+
+- Give every handoff one exclusive owner: native GPT Live, authenticated OpenAI
+  web search, or an isolated Codex task.
+- Route YouTube, Spotify, Apple Music, songs, playlists, and playback controls
+  directly to the bounded Codex media lane before native or search fallback.
+- Remove the configured wake name before routing, search, or delegated
+  execution so custom wake names cannot distort intent classification.
+- Silently suppress repeated native fallback handoffs instead of speaking a
+  contradictory “native web access is unavailable” refusal.
+- Use one shared application classifier for Codex routing and media safety
+  contracts, shorten media acknowledgements, and forbid duplicate Live speech
+  after a handoff is accepted.
+- Complete the browser SDK lifecycle-event parser and add routing matrix,
+  wake-normalization, lane-deduplication, and settings propagation coverage.
+
 ## 0.3.5 - 2026-08-09
 
 - Make browser media playback single-flight so repeated or slightly different

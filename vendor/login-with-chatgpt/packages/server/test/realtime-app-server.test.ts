@@ -179,7 +179,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(speech).toEqual(["Codex started. You can keep talking while it works."]);
   });
 
-  test("interrupts simple native-only handoffs and retries them without starting Codex", async () => {
+  test("retries one native-only handoff and silently suppresses repeated fallback loops", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -188,7 +188,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       tools: [],
       executeTool: async () => ({ output: {} }),
       handoffAcknowledgement: "Codex started.",
-      routeHandoff: (transcript) => transcript.includes("search the web") ? "native" : "codex",
+      routeHandoff: () => "native",
       now: () => 1_000,
     });
     session.onEvent((event) => events.push(event));
@@ -201,12 +201,22 @@ describe("ChatGPTRealtimeAppServerSession", () => {
         input_transcript: "Juniper, search the web for today's OpenHome news",
       },
     });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Tell me today's OpenHome news instead",
+      },
+    });
     await settle();
 
     expect(events).toContainEqual({
       type: "handoff.redirected",
-      transcript: "Juniper, search the web for today's OpenHome news",
+      transcript: "search the web for today's OpenHome news",
       destination: "native",
+    });
+    expect(events).toContainEqual({
+      type: "handoff.deduplicated",
+      transcript: "Tell me today's OpenHome news instead",
     });
     expect(events.some((event) => event.type === "handoff.started")).toBe(false);
     expect(speech).toEqual([]);
@@ -247,6 +257,12 @@ describe("ChatGPTRealtimeAppServerSession", () => {
         input_transcript: "Juniper, search the web for today's OpenHome news",
       },
     });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "search the web for today's OpenHome news",
+      },
+    });
     await settle();
 
     expect(searched).toEqual(["search the web for today's OpenHome news"]);
@@ -258,6 +274,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(events.some((event) => event.type === "handoff.started")).toBe(false);
     expect(events.some((event) => event.type === "search.started")).toBe(true);
     expect(events.some((event) => event.type === "search.completed" && event.status === "completed")).toBe(true);
+    expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
   });
 
   test("keeps OpenAI search available while a Codex task is running", async () => {
@@ -368,6 +385,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     session.onEvent((event) => events.push(event));
     (session as any).speak = async () => {};
     mockStartedSession(session, requests);
+    (session as any).startOptions.wakePhrase = "lara";
 
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: { type: "handoff_request", input_transcript: "Lara, play Midnight City on YouTube." },
@@ -380,6 +398,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
     const turnStart = requests.find((request) => request.method === "turn/start");
     expect(JSON.stringify(turnStart?.params)).toContain('kind=\\"media\\"');
+    expect(JSON.stringify(turnStart?.params)).not.toContain("Lara,");
     expect(JSON.stringify(turnStart?.params)).toContain("Open at most one new tab and one media stream");
     expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
   });

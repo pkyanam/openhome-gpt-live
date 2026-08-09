@@ -91,6 +91,8 @@ export interface ChatGPTRealtimeAppServerOptions {
    * requests start in isolated execution threads.
    */
   routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search";
+  /** Classifies an accepted Codex handoff for its execution contract and safety limits. */
+  classifyHandoff?: (transcript: string) => "general" | "computer" | "media";
   cwd?: string;
   /** Defaults to read-only. Use workspace-write only for an explicitly scoped cwd. */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -107,6 +109,8 @@ export interface ChatGPTRealtimeAppServerOptions {
 export interface StartRealtimeAppServerOptions {
   sdp: string;
   voice?: string;
+  /** Server-owned wake phrase removed before routing or delegated execution. */
+  wakePhrase?: string;
   /** IANA timezone used for native date/time context. Defaults to the server timezone. */
   timezone?: string;
   /** JavaScript-style UTC offset in minutes (`Date#getTimezoneOffset`). */
@@ -152,6 +156,7 @@ interface SearchHandoff {
 const SPEAK_TOOL = "speak_to_user";
 const MAX_PARALLEL_HANDOFFS = 4;
 const HANDOFF_DEDUPE_MS = 30_000;
+const NATIVE_RETRY_GUARD_MS = 8_000;
 const MEDIA_REPLAY_GUARD_MS = 5_000;
 const DEFAULT_TASK_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_COMPUTER_TASK_TIMEOUT_MS = 2 * 60_000;
@@ -206,6 +211,7 @@ export class ChatGPTRealtimeAppServerSession {
   private recentNativeRedirects = new Map<string, number>();
   private recentSearches = new Map<string, number>();
   private activeSearches = new Map<string, SearchHandoff>();
+  private lastNativeRedirectAt?: number;
   private lastMediaHandoffAt?: number;
   private speechTail: Promise<void> = Promise.resolve();
 
@@ -630,11 +636,12 @@ export class ChatGPTRealtimeAppServerSession {
   }
 
   private handleHandoff(item: JsonObject): void {
-    const transcript = (typeof item["input_transcript"] === "string"
+    const rawTranscript = (typeof item["input_transcript"] === "string"
       ? item["input_transcript"]
       : typeof item["input"] === "string"
         ? item["input"]
         : "").trim();
+    const transcript = stripWakeWord(rawTranscript, this.startOptions?.wakePhrase);
     if (!transcript) return;
     const normalizedTranscript = normalizeTranscript(transcript);
     const now = this.nowMs();
@@ -650,12 +657,22 @@ export class ChatGPTRealtimeAppServerSession {
     const destination = this.options.routeHandoff?.(transcript) ?? "codex";
     if (destination === "native") {
       const redirectKey = nativeRedirectKey(transcript);
-      const retry = !this.recentNativeRedirects.has(redirectKey);
+      if (
+        this.recentNativeRedirects.has(redirectKey)
+        || (
+          this.lastNativeRedirectAt !== undefined
+          && now - this.lastNativeRedirectAt < NATIVE_RETRY_GUARD_MS
+        )
+      ) {
+        this.emit({ type: "handoff.deduplicated", transcript });
+        return;
+      }
       this.recentNativeRedirects.set(redirectKey, now);
+      this.lastNativeRedirectAt = now;
       this.emit({ type: "handoff.redirected", transcript, destination: "native" });
-      void this.retryNativeHandoff(transcript, retry).catch(() => this.emit({
+      void this.retryNativeHandoff(transcript).catch(() => this.emit({
         type: "error",
-        message: "The native GPT Live search retry failed.",
+        message: "The native GPT Live retry failed.",
       }));
       return;
     }
@@ -684,7 +701,7 @@ export class ChatGPTRealtimeAppServerSession {
       void this.runSearch(search);
       return;
     }
-    const kind = delegatedTaskKind(transcript);
+    const kind = this.options.classifyHandoff?.(transcript) ?? delegatedTaskKind(transcript);
     if (
       [...this.activeTasks.values()].some((task) => task.normalizedTranscript === normalizedTranscript)
       || this.recentHandoffs.has(normalizedTranscript)
@@ -761,7 +778,7 @@ export class ChatGPTRealtimeAppServerSession {
   private async runSearch(search: SearchHandoff): Promise<void> {
     let status: "completed" | "failed" = "completed";
     try {
-      const result = await this.options.executeSearch!(stripWakeWord(search.transcript));
+      const result = await this.options.executeSearch!(search.transcript);
       if (!result.trim()) throw new Error("OpenAI web search returned no result.");
       await this.speak(result);
     } catch {
@@ -778,14 +795,8 @@ export class ChatGPTRealtimeAppServerSession {
     }
   }
 
-  private async retryNativeHandoff(transcript: string, retry: boolean): Promise<void> {
+  private async retryNativeHandoff(transcript: string): Promise<void> {
     if (!this.threadId) return;
-    if (!retry) {
-      await this.speak(
-        "Native web search isn’t available in this Live session, so I did not send that request to Codex.",
-      );
-      return;
-    }
     await this.expectResult("thread/realtime/appendText", {
       threadId: this.threadId,
       role: "developer",
@@ -796,7 +807,7 @@ export class ChatGPTRealtimeAppServerSession {
     await this.expectResult("thread/realtime/appendText", {
       threadId: this.threadId,
       role: "user",
-      text: `Native-only retry. Do not delegate to Codex: ${stripWakeWord(transcript)}`,
+      text: `Native-only retry. Do not delegate to Codex: ${transcript}`,
     }, 5_000);
   }
 
@@ -1071,10 +1082,12 @@ function normalizeTranscript(value: string): string {
 
 function delegatedTaskKind(value: string): DelegatedTask["kind"] {
   const normalized = normalizeTranscript(value);
-  const mediaAction = /\b(play|stream|listen|watch|put on)\b/.test(normalized);
-  const mediaTarget = /\b(song|music|album|playlist|video|trailer|youtube|spotify|soundcloud)\b/.test(normalized);
-  if ((mediaAction || /\bqueue\b/.test(normalized)) && mediaTarget) return "media";
-  if (/\b(browser|tab|window|helium|chrome|safari|open|launch|quit|click|select|scroll)\b/.test(normalized)) {
+  const mediaAction = /\b(play|stream|listen|watch|put on|pause|resume|stop|skip|next|previous|queue|shuffle|repeat|control|open|launch|close|quit|mute|unmute|turn up|turn down)\b/.test(normalized);
+  const mediaTarget = /\b(song|track|music|album|playlist|podcast|audiobook|video|trailer|movie|show|youtube|spotify|apple music|music app|soundcloud)\b/.test(normalized);
+  const bareMediaPlay = /^(?:please )?play\b/.test(normalized)
+    && !/\b(chess|poker|checkers|game|games|sport|sports|football|basketball|baseball|tennis|devil s advocate|a role)\b/.test(normalized);
+  if ((mediaAction && mediaTarget) || bareMediaPlay) return "media";
+  if (/\b(browser|tab|window|helium|chrome|safari|open|launch|quit|control|click|select|scroll)\b/.test(normalized)) {
     return "computer";
   }
   return "general";
@@ -1089,17 +1102,23 @@ function isActionItem(item: JsonObject | undefined): boolean {
     || item?.["type"] === "collabAgentToolCall";
 }
 
-function stripWakeWord(value: string): string {
-  return value.replace(/^\s*juniper\s*[,;:.-]?\s*/i, "").trim();
+function stripWakeWord(value: string, wakePhrase = "juniper"): string {
+  const phrase = wakePhrase.trim().split(/\s+/).map(escapeRegExp).join("\\s+");
+  if (!phrase) return value.trim();
+  return value.replace(new RegExp(`^\\s*${phrase}\\b\\s*[,;:.-]?\\s*`, "i"), "").trim();
 }
 
 function nativeRedirectKey(value: string): string {
   return normalizeTranscript(
-    stripWakeWord(value).replace(
+    value.replace(
       /^native-only retry\.\s*do not delegate to codex:\s*/i,
       "",
     ),
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function handoffContext(item: JsonObject): string | undefined {
