@@ -25,7 +25,7 @@ interface PairedSession {
   wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
-  codexQueueDepth?: number;
+  codexActiveTasks?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
   lastVoiceRoute?: "native" | "openai_search" | "codex";
@@ -333,7 +333,7 @@ export function PairingApp() {
                 {submitting ? "Saving…" : "Save voice & wake name"}
               </button>
               {session.codexState === "working" && (
-                <small>Wait for the active Codex task before restarting Live.</small>
+                <small>Wait for active Codex tasks to finish before restarting Live.</small>
               )}
             </div>
           </section>
@@ -373,7 +373,9 @@ export function PairingApp() {
                   <dt>Codex</dt>
                   <dd>
                     {session.codexState ?? "idle"}
-                    {(session.codexQueueDepth ?? 0) > 0 ? ` · ${session.codexQueueDepth} queued` : ""}
+                    {(session.codexActiveTasks ?? 0) > 0
+                      ? ` · ${session.codexActiveTasks} active`
+                      : ""}
                   </dd>
                 </div>
                 {session.lastCodexTaskStatus && (

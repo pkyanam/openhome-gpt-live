@@ -43,12 +43,15 @@ controlled positive wake test and one no-wake negative test pass.
 - Current facts and simple searches: OpenAI subscription web search.
 - Files, code, projects, OpenHome actions, and computer control: Codex.
 
-Codex tasks are serialized. GPT Live should acknowledge the handoff promptly
-and announce completion. Search must remain available while Codex is busy.
+Codex tasks run in isolated threads, up to four in parallel. GPT Live should
+acknowledge every handoff promptly and announce each completion. Search must
+remain available while Codex tasks run.
 
 ## Audio and wake checks
 
 - Require the configured wake name for every new request, including barge-in.
+- While GPT Live runs, verify the firmware Chromium capture and playback
+  streams are muted; the Ability watchdog must reapply this after restarts.
 - Keep the same Live session so context survives between gated turns.
 - If speaker playback re-triggers the wake gate, stop the worker; this is a safety
   failure, not harmless transcription noise.

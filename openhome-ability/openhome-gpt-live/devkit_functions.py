@@ -73,6 +73,7 @@ REQUEST_SPEECH_RMS = 40.0
 REQUEST_END_SILENCE_SECONDS = 0.8
 REQUEST_RESPONSE_TIMEOUT_SECONDS = 15.0
 GPT_LIVE_READY_STATES = {"idle", "connected", "listening", "listening_intently"}
+DEFAULT_AGENT_GUARD_INTERVAL_SECONDS = 1.0
 
 
 def configure_and_start(
@@ -183,6 +184,7 @@ def stop_live():
     """Stop only a worker process that matches this Ability's command line."""
     try:
         service_was_active = _disable_boot_service()
+        _set_default_agent_audio_muted(False)
         pid = _read_worker_pid()
         if not pid or not _is_our_worker(pid):
             PID_FILE.unlink(missing_ok=True)
@@ -276,14 +278,76 @@ async def _run_worker():
         except NotImplementedError:
             signal.signal(signum, lambda *_: loop.call_soon_threadsafe(stop_event.set))
 
-    headers = {"Authorization": f"Bearer {config['device_token']}"}
-    async with httpx.AsyncClient(
-        base_url=config["server_url"],
-        headers=headers,
-        timeout=httpx.Timeout(45.0, read=None),
-        follow_redirects=False,
-    ) as client:
-        await _run_reconnecting_worker(client, config, stop_event)
+    guard_task = asyncio.create_task(_guard_default_agent_audio(stop_event))
+    try:
+        headers = {"Authorization": f"Bearer {config['device_token']}"}
+        async with httpx.AsyncClient(
+            base_url=config["server_url"],
+            headers=headers,
+            timeout=httpx.Timeout(45.0, read=None),
+            follow_redirects=False,
+        ) as client:
+            await _run_reconnecting_worker(client, config, stop_event)
+    finally:
+        stop_event.set()
+        guard_task.cancel()
+        await asyncio.gather(guard_task, return_exceptions=True)
+
+
+async def _guard_default_agent_audio(stop_event):
+    """Keep firmware's Chromium voice pipeline silent while GPT Live owns audio."""
+    last_muted = None
+    while not stop_event.is_set():
+        try:
+            muted = _set_default_agent_audio_muted(True)
+            if muted and muted != last_muted:
+                log.info(
+                    "Suppressed %d OpenHome default-agent audio stream(s)",
+                    muted,
+                )
+            last_muted = muted
+        except Exception as error:
+            log.warning("Could not suppress the OpenHome default-agent audio: %s", error)
+        await _wait_or_stop(stop_event, DEFAULT_AGENT_GUARD_INTERVAL_SECONDS)
+
+
+def _set_default_agent_audio_muted(muted):
+    """Mute only headless Chromium capture/playback streams, never GPT Live."""
+    if not shutil.which("pactl"):
+        return 0
+    changed = 0
+    for kind, command in (
+        ("sink-inputs", "set-sink-input-mute"),
+        ("source-outputs", "set-source-output-mute"),
+    ):
+        try:
+            streams = json.loads(_pactl_output("-f", "json", "list", kind))
+        except (json.JSONDecodeError, subprocess.SubprocessError):
+            continue
+        for stream in streams if isinstance(streams, list) else []:
+            if not _is_default_agent_audio_stream(stream):
+                continue
+            index = stream.get("index")
+            if not isinstance(index, int):
+                continue
+            subprocess.run(
+                ["pactl", command, str(index), "1" if muted else "0"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            changed += 1
+    return changed
+
+
+def _is_default_agent_audio_stream(stream):
+    if not isinstance(stream, dict):
+        return False
+    properties = stream.get("properties")
+    if not isinstance(properties, dict):
+        return False
+    return properties.get("application.process.binary") == "chromium"
 
 
 async def _run_reconnecting_worker(client, config, stop_event):

@@ -13,6 +13,31 @@ function jwt(payload: Record<string, unknown>): string {
   return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
 }
 
+function mockStartedSession(
+  session: ChatGPTRealtimeAppServerSession,
+  requests: Array<{ method: string; params: Record<string, unknown> }> = [],
+): void {
+  let threadNumber = 0;
+  (session as any).threadId = "realtime_thread";
+  (session as any).home = "/tmp/openhome-gpt-live-test";
+  (session as any).startOptions = { sdp: "v=0\r\n", model: "gpt-test" };
+  (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
+    requests.push({ method, params });
+    if (method === "thread/start") {
+      threadNumber += 1;
+      return { result: { thread: { id: `task_thread_${threadNumber}` } } };
+    }
+    if (method === "turn/start") {
+      return { result: { turn: { id: `turn_${params.threadId}` } } };
+    }
+    return { result: {} };
+  };
+}
+
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("ChatGPTRealtimeAppServerSession", () => {
   test("rejects spawn failures and removes temporary credentials", async () => {
     const session = new ChatGPTRealtimeAppServerSession({
@@ -134,6 +159,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     (session as any).speak = async (text: string) => {
       speech.push(text);
     };
+    mockStartedSession(session);
 
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: {
@@ -141,9 +167,15 @@ describe("ChatGPTRealtimeAppServerSession", () => {
         input_transcript: "Create a small game.",
       },
     });
-    await Promise.resolve();
+    await settle();
 
     expect(events).toContainEqual({ type: "handoff", transcript: "Create a small game." });
+    expect(events).toContainEqual({
+      type: "handoff.started",
+      taskId: expect.any(String),
+      transcript: "Create a small game.",
+      activeCount: 1,
+    });
     expect(speech).toEqual(["Codex started. You can keep talking while it works."]);
   });
 
@@ -160,12 +192,8 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       now: () => 1_000,
     });
     session.onEvent((event) => events.push(event));
-    (session as any).threadId = "thread_1";
     (session as any).speak = async (text: string) => speech.push(text);
-    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
-      requests.push({ method, params });
-      return { result: {} };
-    };
+    mockStartedSession(session, requests);
 
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: {
@@ -173,8 +201,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
         input_transcript: "Juniper, search the web for today's OpenHome news",
       },
     });
-    (session as any).handleNotification("turn/started", { turn: { id: "turn_search" } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     expect(events).toContainEqual({
       type: "handoff.redirected",
@@ -184,12 +211,10 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(events.some((event) => event.type === "handoff.started")).toBe(false);
     expect(speech).toEqual([]);
     expect(requests.map((request) => request.method)).toEqual([
-      "turn/interrupt",
       "thread/realtime/appendText",
       "thread/realtime/appendText",
     ]);
-    expect(requests[0]?.params).toEqual({ threadId: "thread_1", turnId: "turn_search" });
-    expect(requests[2]?.params).toMatchObject({
+    expect(requests[1]?.params).toMatchObject({
       role: "user",
       text: "Native-only retry. Do not delegate to Codex: search the web for today's OpenHome news",
     });
@@ -213,12 +238,8 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       now: () => 1_000,
     });
     session.onEvent((event) => events.push(event));
-    (session as any).threadId = "thread_1";
     (session as any).speak = async (text: string) => speech.push(text);
-    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
-      requests.push({ method, params });
-      return { result: {} };
-    };
+    mockStartedSession(session, requests);
 
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: {
@@ -226,18 +247,14 @@ describe("ChatGPTRealtimeAppServerSession", () => {
         input_transcript: "Juniper, search the web for today's OpenHome news",
       },
     });
-    (session as any).handleNotification("turn/started", { turn: { id: "turn_search" } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     expect(searched).toEqual(["search the web for today's OpenHome news"]);
     expect(speech).toEqual([
       "I’m searching OpenAI now.",
       "OpenHome released version one point two today, according to GitHub.",
     ]);
-    expect(requests).toEqual([{
-      method: "turn/interrupt",
-      params: { threadId: "thread_1", turnId: "turn_search" },
-    }]);
+    expect(requests).toEqual([]);
     expect(events.some((event) => event.type === "handoff.started")).toBe(false);
     expect(events.some((event) => event.type === "search.started")).toBe(true);
     expect(events.some((event) => event.type === "search.completed" && event.status === "completed")).toBe(true);
@@ -259,28 +276,26 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       searchAcknowledgement: "Searching OpenAI.",
       now: () => 1_000,
     });
-    (session as any).threadId = "thread_1";
     (session as any).speak = async (text: string) => speech.push(text);
-    (session as any).expectResult = async () => ({ result: {} });
+    mockStartedSession(session);
 
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: { type: "handoff_request", input_transcript: "Build a game in my workspace." },
     });
-    (session as any).handleNotification("turn/started", { turn: { id: "turn_codex" } });
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: { type: "handoff_request", input_transcript: "Juniper, search for the latest news" },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     expect(searched).toEqual(["search for the latest news"]);
     expect(speech).toContain("Codex started.");
     expect(speech).toContain("Searching OpenAI.");
     expect(speech).toContain("Here is the current result.");
-    expect((session as any).queuedTasks).toHaveLength(0);
-    expect((session as any).activeTask?.transcript).toBe("Build a game in my workspace.");
+    expect((session as any).activeTasks.size).toBe(1);
+    expect([...(session as any).activeTasks.values()][0]?.transcript).toBe("Build a game in my workspace.");
   });
 
-  test("queues overlapping handoffs, deduplicates retries, and isolates the next turn", async () => {
+  test("starts overlapping handoffs in parallel isolated threads and deduplicates retries", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -288,24 +303,15 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       tokens: { accessToken: "access", accountId: "acct_123" },
       tools: [],
       executeTool: async () => ({ output: {} }),
-      handoffAcknowledgement: "Codex started the first task.",
+      handoffAcknowledgement: "I started that in a new Codex task.",
       now: () => 1_000,
     });
     session.onEvent((event) => events.push(event));
-    (session as any).threadId = "thread_1";
     (session as any).speak = async (text: string) => speech.push(text);
-    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
-      requests.push({ method, params });
-      return method === "turn/start"
-        ? { result: { turn: { id: "turn_queued" } } }
-        : { result: {} };
-    };
+    mockStartedSession(session, requests);
 
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: { type: "handoff_request", input_transcript: "Build a game." },
-    });
-    (session as any).handleNotification("turn/started", {
-      turn: { id: "turn_first" },
     });
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: {
@@ -321,23 +327,33 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       item: { type: "handoff_request", input_transcript: "Look up OpenHome." },
     });
 
+    await settle();
+
+    expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(2);
+    const turnStarts = requests.filter((request) => request.method === "turn/start");
+    expect(turnStarts).toHaveLength(2);
+    expect(turnStarts.map((request) => request.params.threadId)).toEqual([
+      "task_thread_1",
+      "task_thread_2",
+    ]);
+    expect(JSON.stringify(turnStarts[1]?.params)).toContain("Look up OpenHome.");
+    expect(JSON.stringify(turnStarts[1]?.params)).toContain("OpenHome makes an AI speaker.");
+    expect(events.some((event) => event.type === "handoff.deduplicated")).toBe(true);
+    expect(speech.filter((text) => text === "I started that in a new Codex task.")).toHaveLength(2);
+
     await (session as any).handleTurnCompleted({
+      threadId: "task_thread_1",
       turn: {
-        id: "turn_first",
+        id: "turn_task_thread_1",
         status: "completed",
-        items: [{ type: "agentMessage", text: "I cannot search the web." }],
+        items: [{ type: "agentMessage", text: "The first task is complete." }],
       },
     });
 
-    expect(speech).toContain("Codex is still working on your earlier task. I queued this request in position 1.");
-    expect(speech).toContain("Codex finished your earlier build task.");
-    expect(speech).toContain("I’ve started your next queued Codex task.");
-    expect(events.some((event) => event.type === "handoff.deduplicated")).toBe(true);
+    expect(speech).toContain("The first task is complete.");
     expect(events.some((event) => event.type === "handoff.completed" && event.fallbackSpeech)).toBe(true);
-    const queuedStart = requests.find((request) => request.method === "turn/start");
-    expect(queuedStart?.params).toMatchObject({ threadId: "thread_1" });
-    expect(JSON.stringify(queuedStart?.params)).toContain("Look up OpenHome.");
-    expect(JSON.stringify(queuedStart?.params)).toContain("OpenHome makes an AI speaker.");
+    expect((session as any).activeTasks.size).toBe(1);
+    expect((session as any).tasksByThreadId.has("task_thread_2")).toBe(true);
   });
 
   test("speaks the completed turn result when Codex omitted its speech tool", async () => {
@@ -347,17 +363,17 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       tools: [],
       executeTool: async () => ({ output: {} }),
     });
-    (session as any).threadId = "thread_1";
     (session as any).speak = async (text: string) => speech.push(text);
-    (session as any).expectResult = async () => ({ result: {} });
+    mockStartedSession(session);
     (session as any).handleNotification("thread/realtime/itemAdded", {
       item: { type: "handoff_request", input_transcript: "Create a project." },
     });
-    (session as any).handleNotification("turn/started", { turn: { id: "turn_1" } });
+    await settle();
 
     await (session as any).handleTurnCompleted({
+      threadId: "task_thread_1",
       turn: {
-        id: "turn_1",
+        id: "turn_task_thread_1",
         status: "completed",
         items: [{ type: "agentMessage", text: "Done — I created the project and verified it." }],
       },

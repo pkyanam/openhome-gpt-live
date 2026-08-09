@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.4 - 2026-08-09
+
+- Start every delegated request in its own ephemeral Codex thread, with up to
+  four concurrent tasks instead of one blocking FIFO queue.
+- Correlate dynamic tools, speech, and completion notices by execution thread so
+  parallel tasks cannot overwrite or delay each other's results.
+- Use client-managed realtime handoffs so OpenAI web search and native retries
+  remain independent of every running Codex task.
+- Suppress the firmware dashboard's Chromium microphone and speaker streams
+  while GPT Live owns audio, and continuously reapply the reversible mute after
+  firmware or browser restarts.
+- Show active Codex task count on the setup page and refresh the runbook,
+  architecture, troubleshooting, skill, package, and release metadata.
+
 ## 0.3.3 - 2026-08-09
 
 - Keep the boot worker in the persistent GPT Live state directory instead of

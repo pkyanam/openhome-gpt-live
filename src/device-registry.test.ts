@@ -70,7 +70,7 @@ describe("DeviceRegistry", () => {
     expect(record?.pendingConfirmations).toHaveLength(1);
   });
 
-  test("tracks Codex work and queue state without persisting voice transcripts", async () => {
+  test("tracks parallel Codex work without persisting voice transcripts", async () => {
     const { registry, store } = await createRegistry();
     const registration = await registry.register("DevKit");
     await registry.observeBridgeEvent(registration.record.id, { type: "session.started" });
@@ -78,13 +78,13 @@ describe("DeviceRegistry", () => {
       type: "handoff.started",
       taskId: "task-1",
       transcript: "private spoken request",
-      queued: false,
+      activeCount: 1,
     });
     await registry.observeBridgeEvent(registration.record.id, {
-      type: "handoff.queued",
+      type: "handoff.started",
       taskId: "task-2",
       transcript: "another private request",
-      position: 1,
+      activeCount: 2,
     });
     await registry.observeBridgeEvent(registration.record.id, {
       type: "handoff.completed",
@@ -92,12 +92,7 @@ describe("DeviceRegistry", () => {
       transcript: "private spoken request",
       status: "completed",
       fallbackSpeech: true,
-    });
-    await registry.observeBridgeEvent(registration.record.id, {
-      type: "handoff.started",
-      taskId: "task-2",
-      transcript: "another private request",
-      queued: true,
+      activeCount: 1,
     });
     await registry.observeBridgeEvent(registration.record.id, {
       type: "handoff.redirected",
@@ -113,7 +108,7 @@ describe("DeviceRegistry", () => {
     const record = await store.get(registration.record.id);
     expect(record).toMatchObject({
       codexState: "working",
-      codexQueueDepth: 0,
+      codexActiveTasks: 1,
       lastCodexTaskStatus: "completed",
       lastVoiceRoute: "openai_search",
     });

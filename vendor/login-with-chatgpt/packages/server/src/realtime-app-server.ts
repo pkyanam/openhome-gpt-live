@@ -39,8 +39,7 @@ export type RealtimeBridgeEvent =
   | { type: "session.started" }
   | { type: "session.closed" }
   | { type: "handoff"; transcript: string }
-  | { type: "handoff.started"; taskId: string; transcript: string; queued: boolean }
-  | { type: "handoff.queued"; taskId: string; transcript: string; position: number }
+  | { type: "handoff.started"; taskId: string; transcript: string; activeCount: number }
   | { type: "handoff.deduplicated"; transcript: string }
   | { type: "handoff.redirected"; transcript: string; destination: "native" }
   | { type: "search.started"; taskId: string; transcript: string }
@@ -56,6 +55,7 @@ export type RealtimeBridgeEvent =
     transcript: string;
     status: "completed" | "failed" | "interrupted";
     fallbackSpeech: boolean;
+    activeCount: number;
   }
   | { type: "tool.running"; callId: string; name: string }
   | { type: "tool.completed"; callId: string; name: string }
@@ -86,9 +86,9 @@ export interface ChatGPTRealtimeAppServerOptions {
   /** Spoken immediately after the OpenAI search lane accepts a handoff. */
   searchAcknowledgement?: string | ((transcript: string) => string | undefined);
   /**
-   * Routes an incoming native handoff. Returning `native` interrupts the
-   * automatically-created Codex turn and retries the request in GPT Live;
-   * `openai_search` interrupts it and runs `executeSearch` instead.
+   * Routes an incoming native handoff. Returning `native` retries the request
+   * in GPT Live; `openai_search` runs `executeSearch` independently. Codex
+   * requests start in isolated execution threads.
    */
   routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search";
   cwd?: string;
@@ -127,15 +127,9 @@ interface DelegatedTask {
   transcript: string;
   normalizedTranscript: string;
   context?: string;
-  queued: boolean;
+  threadId?: string;
   turnId?: string;
   spoke: boolean;
-  contaminated: boolean;
-}
-
-interface NativeHandoffRedirect {
-  transcript: string;
-  retry: boolean;
 }
 
 interface SearchHandoff {
@@ -145,7 +139,7 @@ interface SearchHandoff {
 }
 
 const SPEAK_TOOL = "speak_to_user";
-const MAX_QUEUED_HANDOFFS = 5;
+const MAX_PARALLEL_HANDOFFS = 4;
 const HANDOFF_DEDUPE_MS = 30_000;
 const DEFAULT_EXECUTION_INSTRUCTIONS =
   "You are the execution side of one native realtime voice assistant. Requests arrive inside " +
@@ -188,13 +182,11 @@ export class ChatGPTRealtimeAppServerSession {
   }>>();
   private confirmations = new Map<string, PendingConfirmation>();
   private allowedTools: Set<string>;
-  private activeTask?: DelegatedTask;
-  private queuedTasks: DelegatedTask[] = [];
+  private activeTasks = new Map<string, DelegatedTask>();
+  private tasksByThreadId = new Map<string, DelegatedTask>();
   private recentHandoffs = new Map<string, number>();
   private recentNativeRedirects = new Map<string, number>();
   private recentSearches = new Map<string, number>();
-  private pendingNativeRedirect?: NativeHandoffRedirect;
-  private pendingSearchTurn?: string;
   private activeSearches = new Map<string, SearchHandoff>();
   private speechTail: Promise<void> = Promise.resolve();
 
@@ -272,7 +264,10 @@ export class ChatGPTRealtimeAppServerSession {
         this.expectResult("thread/realtime/start", {
           threadId: this.threadId,
           outputModality: "audio",
-          clientManagedHandoffs: false,
+          // The bridge routes every handoff itself. Codex requests get a new
+          // execution thread, while native and search requests stay completely
+          // independent of running Codex work.
+          clientManagedHandoffs: true,
           // Newer V3 app-servers suppress their vague built-in "checking"
           // filler; this bridge supplies a concrete acknowledgement after the
           // Codex handoff has actually been accepted. Older versions safely
@@ -529,17 +524,9 @@ export class ChatGPTRealtimeAppServerSession {
     if (name === SPEAK_TOOL) {
       const text = args["text"];
       if (typeof text !== "string" || !text.trim()) throw new Error("speak_to_user requires text.");
-      const task = this.activeTask;
+      const task = this.taskForRequest(params);
       if (task?.spoke) {
         this.send({ id, result: dynamicToolResponse({ status: "already_spoken" }) });
-        this.emit({ type: "tool.completed", callId, name });
-        return;
-      }
-      // Realtime currently steers a second handoff into an already-running
-      // Codex turn. Do not let the steered request replace the first task's
-      // completion speech. The bridge will run that queued request separately.
-      if (task?.contaminated) {
-        this.send({ id, result: dynamicToolResponse({ status: "deferred_to_task_queue" }) });
         this.emit({ type: "tool.completed", callId, name });
         return;
       }
@@ -582,25 +569,11 @@ export class ChatGPTRealtimeAppServerSession {
         this.handleHandoff(item);
       }
     } else if (method === "turn/started") {
+      const threadId = typeof params["threadId"] === "string" ? params["threadId"] : undefined;
       const turn = asRecord(params["turn"]);
-      if (this.pendingNativeRedirect && typeof turn?.["id"] === "string") {
-        const redirect = this.pendingNativeRedirect;
-        this.pendingNativeRedirect = undefined;
-        void this.completeNativeRedirect(turn["id"], redirect).catch(() => this.emit({
-          type: "error",
-          message: "The native GPT Live search retry failed.",
-        }));
-      } else if (this.pendingSearchTurn && typeof turn?.["id"] === "string") {
-        this.pendingSearchTurn = undefined;
-        void this.expectResult("turn/interrupt", {
-          threadId: this.threadId,
-          turnId: turn["id"],
-        }, 5_000).catch(() => this.emit({
-          type: "error",
-          message: "The automatic Codex search handoff could not be cancelled.",
-        }));
-      } else if (this.activeTask && !this.activeTask.turnId && typeof turn?.["id"] === "string") {
-        this.activeTask.turnId = turn["id"];
+      const task = threadId ? this.tasksByThreadId.get(threadId) : undefined;
+      if (task && !task.turnId && typeof turn?.["id"] === "string") {
+        task.turnId = turn["id"];
       }
     } else if (method === "turn/completed") {
       void this.handleTurnCompleted(params).catch(() => this.emit({
@@ -638,14 +611,10 @@ export class ChatGPTRealtimeAppServerSession {
       const retry = !this.recentNativeRedirects.has(redirectKey);
       this.recentNativeRedirects.set(redirectKey, now);
       this.emit({ type: "handoff.redirected", transcript, destination: "native" });
-      if (this.activeTask) {
-        void this.retryNativeHandoff(transcript, retry).catch(() => this.emit({
-          type: "error",
-          message: "The native GPT Live search retry failed.",
-        }));
-      } else {
-        this.pendingNativeRedirect = { transcript, retry };
-      }
+      void this.retryNativeHandoff(transcript, retry).catch(() => this.emit({
+        type: "error",
+        message: "The native GPT Live search retry failed.",
+      }));
       return;
     }
     if (destination === "openai_search") {
@@ -668,15 +637,13 @@ export class ChatGPTRealtimeAppServerSession {
         normalizedTranscript,
       };
       this.activeSearches.set(normalizedTranscript, search);
-      if (!this.activeTask) this.pendingSearchTurn = search.id;
       this.emit({ type: "search.started", taskId: search.id, transcript });
       this.acknowledgeSearch(transcript);
       void this.runSearch(search);
       return;
     }
     if (
-      this.activeTask?.normalizedTranscript === normalizedTranscript
-      || this.queuedTasks.some((task) => task.normalizedTranscript === normalizedTranscript)
+      [...this.activeTasks.values()].some((task) => task.normalizedTranscript === normalizedTranscript)
       || this.recentHandoffs.has(normalizedTranscript)
     ) {
       this.emit({ type: "handoff.deduplicated", transcript });
@@ -688,37 +655,20 @@ export class ChatGPTRealtimeAppServerSession {
       transcript,
       normalizedTranscript,
       context: handoffContext(item),
-      queued: Boolean(this.activeTask),
       spoke: false,
-      contaminated: false,
     };
     this.emit({ type: "handoff", transcript });
 
-    if (!this.activeTask) {
-      this.activeTask = task;
-      this.emit({ type: "handoff.started", taskId: task.id, transcript, queued: false });
-      this.acknowledgeHandoff(transcript);
-      this.publishTaskState();
+    if (this.activeTasks.size >= MAX_PARALLEL_HANDOFFS) {
+      this.recentHandoffs.delete(normalizedTranscript);
+      void this.speak(
+        `Codex is already running ${MAX_PARALLEL_HANDOFFS} tasks. Please try that request again after one finishes.`,
+      ).catch(() => this.emit({ type: "error", message: "The Codex capacity notice could not be spoken." }));
       return;
     }
-
-    this.activeTask.contaminated = !this.activeTask.spoke;
-    if (this.queuedTasks.length >= MAX_QUEUED_HANDOFFS) {
-      void this.speak("Codex already has several tasks queued. Please try that request again after one finishes.")
-        .catch(() => this.emit({ type: "error", message: "The Codex queue-full notice could not be spoken." }));
-      return;
-    }
-    this.queuedTasks.push(task);
-    this.emit({
-      type: "handoff.queued",
-      taskId: task.id,
-      transcript,
-      position: this.queuedTasks.length,
-    });
-    void this.speak(
-      `Codex is still working on your earlier task. I queued this request in position ${this.queuedTasks.length}.`,
-    ).catch(() => this.emit({ type: "error", message: "The Codex queue acknowledgement could not be spoken." }));
+    this.activeTasks.set(task.id, task);
     this.publishTaskState();
+    void this.startDelegatedTask(task);
   }
 
   private acknowledgeHandoff(transcript: string): void {
@@ -765,18 +715,6 @@ export class ChatGPTRealtimeAppServerSession {
     }
   }
 
-  private async completeNativeRedirect(
-    turnId: string,
-    redirect: NativeHandoffRedirect,
-  ): Promise<void> {
-    if (!this.threadId) return;
-    await this.expectResult("turn/interrupt", {
-      threadId: this.threadId,
-      turnId,
-    }, 5_000);
-    await this.retryNativeHandoff(redirect.transcript, redirect.retry);
-  }
-
   private async retryNativeHandoff(transcript: string, retry: boolean): Promise<void> {
     if (!this.threadId) return;
     if (!retry) {
@@ -800,7 +738,7 @@ export class ChatGPTRealtimeAppServerSession {
   }
 
   private async handleTurnCompleted(params: JsonObject): Promise<void> {
-    const task = this.activeTask;
+    const task = this.taskForRequest(params);
     if (!task) return;
     const turn = asRecord(params["turn"]);
     const turnId = typeof turn?.["id"] === "string" ? turn["id"] : undefined;
@@ -811,9 +749,7 @@ export class ChatGPTRealtimeAppServerSession {
     let fallbackSpeech = false;
     if (!task.spoke) {
       fallbackSpeech = true;
-      const result = status === "completed" && !task.contaminated
-        ? finalAgentSpeech(turn)
-        : undefined;
+      const result = status === "completed" ? finalAgentSpeech(turn) : undefined;
       const speech = result ?? taskCompletionFallback(task.transcript, status);
       try {
         await this.speak(speech);
@@ -827,54 +763,89 @@ export class ChatGPTRealtimeAppServerSession {
       transcript: task.transcript,
       status,
       fallbackSpeech,
+      activeCount: Math.max(0, this.activeTasks.size - 1),
     });
-    this.activeTask = undefined;
+    this.activeTasks.delete(task.id);
+    if (task.threadId) this.tasksByThreadId.delete(task.threadId);
     this.publishTaskState();
-    await this.startNextQueuedTask();
   }
 
-  private async startNextQueuedTask(): Promise<void> {
-    if (this.activeTask || !this.threadId) return;
-    const task = this.queuedTasks.shift();
-    if (!task) return;
-    this.activeTask = task;
+  private async startDelegatedTask(task: DelegatedTask): Promise<void> {
+    if (!this.startOptions || !this.home) return;
     try {
-      const response = await this.expectResult("turn/start", {
-        threadId: this.threadId,
-        input: [{ type: "text", text: queuedDelegationPrompt(task) }],
+      const threadResponse = await this.expectResult("thread/start", {
+        cwd: this.options.cwd ?? this.home,
+        ephemeral: true,
+        approvalPolicy: "never",
+        sandbox: this.options.sandbox ?? "read-only",
+        threadSource: "realtime_voice",
+        baseInstructions: this.options.executionInstructions ?? DEFAULT_EXECUTION_INSTRUCTIONS,
+        developerInstructions: this.options.executionInstructions ?? DEFAULT_EXECUTION_INSTRUCTIONS,
+        dynamicTools: [...this.options.tools, speakToolSpec()],
+        ...realtimeExecutionConfig(this.startOptions),
       });
-      const turn = asRecord(asRecord(response["result"])?.["turn"]);
+      const thread = asRecord(asRecord(threadResponse["result"])?.["thread"]);
+      if (typeof thread?.["id"] !== "string") throw new Error("App-server returned no task thread id.");
+      task.threadId = thread["id"];
+      this.tasksByThreadId.set(task.threadId, task);
+
+      const turnResponse = await this.expectResult("turn/start", {
+        threadId: task.threadId,
+        input: [{ type: "text", text: delegationPrompt(task) }],
+      });
+      const turn = asRecord(asRecord(turnResponse["result"])?.["turn"]);
       if (typeof turn?.["id"] === "string") task.turnId = turn["id"];
-      this.emit({ type: "handoff.started", taskId: task.id, transcript: task.transcript, queued: true });
-      void this.speak("I’ve started your next queued Codex task.").catch(() => this.emit({
-        type: "error",
-        message: "The queued-task start notice could not be spoken.",
-      }));
+      this.emit({
+        type: "handoff.started",
+        taskId: task.id,
+        transcript: task.transcript,
+        activeCount: this.activeTasks.size,
+      });
+      this.acknowledgeHandoff(task.transcript);
       this.publishTaskState();
     } catch {
-      this.activeTask = undefined;
+      this.activeTasks.delete(task.id);
+      if (task.threadId) this.tasksByThreadId.delete(task.threadId);
+      this.recentHandoffs.delete(task.normalizedTranscript);
       this.emit({
         type: "handoff.completed",
         taskId: task.id,
         transcript: task.transcript,
         status: "failed",
         fallbackSpeech: true,
+        activeCount: this.activeTasks.size,
       });
-      await this.speak("I couldn’t start the next queued Codex task.").catch(() => {});
-      await this.startNextQueuedTask();
+      await this.speak("I couldn’t start that Codex task. Please try again.").catch(() => {});
+      this.publishTaskState();
     }
   }
 
   private publishTaskState(): void {
     if (!this.threadId) return;
-    const text = this.activeTask
-      ? `Runtime task state: Codex is BUSY with one delegated task; ${this.queuedTasks.length} additional task${this.queuedTasks.length === 1 ? " is" : "s are"} queued. While Codex is busy, use native GPT Live capabilities for ordinary answers and web searches. Do not hand the same request to Codex twice.`
-      : "Runtime task state: Codex is IDLE and no delegated tasks are queued.";
+    const count = this.activeTasks.size;
+    const text = count > 0
+      ? `Runtime task state: Codex has ${count} independent task${count === 1 ? "" : "s"} running in parallel. Native GPT Live remains available for ordinary answers and web searches. Each new action may start in its own Codex thread. Do not hand the same request to Codex twice.`
+      : "Runtime task state: Codex is IDLE and no delegated tasks are running.";
     void this.expectResult("thread/realtime/appendText", {
       threadId: this.threadId,
       role: "developer",
       text,
     }, 5_000).catch(() => {});
+  }
+
+  private taskForRequest(params: JsonObject): DelegatedTask | undefined {
+    const threadId = params["threadId"];
+    if (typeof threadId === "string") return this.tasksByThreadId.get(threadId);
+    const turnId = params["turnId"];
+    if (typeof turnId === "string") {
+      return [...this.activeTasks.values()].find((task) => task.turnId === turnId);
+    }
+    const turn = asRecord(params["turn"]);
+    const completedTurnId = turn?.["id"];
+    if (typeof completedTurnId === "string") {
+      return [...this.activeTasks.values()].find((task) => task.turnId === completedTurnId);
+    }
+    return undefined;
   }
 
   private nowMs(): number {
@@ -996,7 +967,7 @@ function handoffContext(item: JsonObject): string | undefined {
     const text = entry?.["text"];
     if (role !== "assistant" || typeof text !== "string") continue;
     const cleaned = text.trim();
-    if (!cleaned || /started that task with codex|codex is still working|queued this request/i.test(cleaned)) {
+    if (!cleaned || /started (?:that|a new) codex task|codex is (?:still )?working|queued this request/i.test(cleaned)) {
       continue;
     }
     return cleaned.slice(0, 1_000);
@@ -1004,14 +975,15 @@ function handoffContext(item: JsonObject): string | undefined {
   return undefined;
 }
 
-function queuedDelegationPrompt(task: DelegatedTask): string {
+function delegationPrompt(task: DelegatedTask): string {
   const context = task.context
     ? `\n  <immediate_context>${escapeXml(task.context)}</immediate_context>`
     : "";
   return (
-    `<realtime_delegation queued="true">\n  <input>${escapeXml(task.transcript)}</input>${context}\n` +
+    `<realtime_delegation parallel="true">\n  <input>${escapeXml(task.transcript)}</input>${context}\n` +
     "</realtime_delegation>\n" +
-    "This is one isolated queued request. Complete only this request; do not replay or merge earlier voice turns."
+    "This request has its own isolated Codex thread. Complete only this request. Other voice tasks may run " +
+    "in parallel, so do not replay, merge, wait for, or report on them."
   );
 }
 

@@ -83,15 +83,14 @@ The host classifies every native handoff before Codex accepts it:
   Codex” requests enter the delegated Codex lane. A local action wins when a
   request contains both research and a mutation.
 
-The automatically created Codex search turn is interrupted before execution.
-The search lane acknowledges immediately, runs independently, and sends its
-speech-friendly result through `thread/realtime/appendSpeech`. It never invokes
-local Codex.
+The bridge uses client-managed handoffs, so web search does not create a Codex
+turn. The search lane acknowledges immediately, runs independently, and sends
+its speech-friendly result through `thread/realtime/appendSpeech`.
 
-Codex work is serialized, deduplicated, and isolated into individual turns.
-The bridge acknowledges accepted work, publishes busy/queue state to GPT Live,
-and guarantees a spoken completion fallback if the execution agent omits its
-own `speak_to_user` call.
+Each Codex request gets a new ephemeral app-server thread and may run in
+parallel, with a four-task safety limit. Handoffs are deduplicated, completion
+events are correlated by thread id, and each task gets a spoken fallback if its
+execution agent omits `speak_to_user`.
 
 OpenHome mutations use prepare/review/confirm. Workspace-only Codex uses
 `workspace-write`. Browser-confirmed host actions run outside the workspace only

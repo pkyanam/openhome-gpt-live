@@ -174,14 +174,20 @@ interruptions. The
 offline gate runs locally, closes again after every answer, and keeps the same
 GPT Live session so conversation context survives.
 
+While GPT Live is running, the Ability mutes only the firmware dashboard's
+default Chromium voice input and output. This prevents the stock OpenHome Agent
+from talking over GPT Live or waking it with its own speech. Stopping GPT Live
+restores those streams.
+
 | Request | Lane |
 | --- | --- |
 | Conversation, explanations, date/time | GPT Live |
 | Current facts, news, weather, web searches | OpenAI web search |
 | Files, code, projects, OpenHome actions, computer control | Codex |
 
-Search and Codex work run independently. Codex tasks are serialized,
-acknowledged when they start, and announced through GPT Live when they finish.
+Search and Codex work run independently. Each Codex request starts immediately
+in its own isolated thread, up to four at once. GPT Live acknowledges each start
+and announces each result without blocking conversation or OpenAI web search.
 
 ## Voices, wake names, and access
 
