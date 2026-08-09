@@ -147,12 +147,17 @@ work for the same host user, then inspect `data/server-error.log`.
 
 ## A media request opens duplicate tabs or Codex keeps clicking
 
-Upgrade to 0.3.5 or newer. Media playback is single-flight and allows one
+Upgrade to 0.3.6 or newer. Media playback is single-flight and allows one
 reused or newly opened tab, one selected result, and one playback stream. The
 bridge ends the task when Codex speaks its completion, or interrupts it after
 12 actions or 90 seconds. Direct computer-control tasks have a 20-action and
-two-minute limit. Do not test by sending the same wake request repeatedly while
-the first acknowledgement is still playing.
+two-minute limit. Media-app commands are routed to Codex before native or search
+fallback, and repeated fallback handoffs are silent. Do not test by sending the
+same wake request repeatedly while the first acknowledgement is still playing.
+
+If the speaker says native web access is unavailable and then performs the
+action anyway, the host is older than 0.3.6 or the existing Live session has not
+reconnected. Restart the host service and wait for `/setup` to return to `live`.
 
 ## The date or time is stale
 

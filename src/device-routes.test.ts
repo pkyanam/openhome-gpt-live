@@ -135,7 +135,7 @@ describe("headless DevKit routes", () => {
       && new URL(request.url).pathname.endsWith("/realtime/app-server")
     );
     expect(await forwardedStart?.json()).toMatchObject({
-      session: { model: "gpt-live-test", voice: "vale" },
+      session: { model: "gpt-live-test", voice: "vale", wakePhrase: "juniper" },
     });
 
     const eventsResponse = await route(new Request(`${deviceBase}/realtime/app-server/live-1/events`, {

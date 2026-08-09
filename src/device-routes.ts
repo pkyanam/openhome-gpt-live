@@ -455,6 +455,7 @@ function enforceServerOwnedDeviceSettings(
     session: {
       ...requestedSession,
       voice: normalizeVoice(record.voice) ?? "vale",
+      wakePhrase: normalizeWakePhrase(record.wakePhrase) ?? "juniper",
     },
   });
 }

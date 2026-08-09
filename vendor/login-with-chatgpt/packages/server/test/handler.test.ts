@@ -256,6 +256,7 @@ describe("createChatGPTHandler", () => {
         sdp: "v=0\r\no=- browser-offer",
         session: {
           voice: "vale",
+          wakePhrase: "lara",
           model: "gpt-5.6-luna",
           timezone: "America/New_York",
           timezoneOffsetMinutes: 240,
@@ -269,6 +270,7 @@ describe("createChatGPTHandler", () => {
     });
     expect(startOptions).toMatchObject({
       voice: "vale",
+      wakePhrase: "lara",
       model: "gpt-5.6-luna",
       timezone: "America/New_York",
       timezoneOffsetMinutes: 240,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { routeRealtimeHandoff } from "./handoff-routing.ts";
+import { classifyCodexTask, routeRealtimeHandoff } from "./handoff-routing.ts";
 
 describe("realtime handoff routing", () => {
   test("keeps simple web and current-information requests in native GPT Live", () => {
@@ -43,5 +43,20 @@ describe("realtime handoff routing", () => {
       .toBe("codex");
     expect(routeRealtimeHandoff("Tell me which abilities are installed on OpenHome"))
       .toBe("codex");
+  });
+
+  test("routes media playback and application controls to Codex", () => {
+    expect(routeRealtimeHandoff("Lara, play Midnight City on YouTube")).toBe("codex");
+    expect(routeRealtimeHandoff("play Midnight City")).toBe("codex");
+    expect(routeRealtimeHandoff("control Spotify and play my discover weekly playlist")).toBe("codex");
+    expect(routeRealtimeHandoff("pause Spotify")).toBe("codex");
+    expect(routeRealtimeHandoff("skip this song in Apple Music")).toBe("codex");
+    expect(routeRealtimeHandoff("play chess in Chrome")).toBe("codex");
+    expect(routeRealtimeHandoff("what is Spotify")).toBe("native");
+    expect(routeRealtimeHandoff("explain how to play chess")).toBe("native");
+    expect(classifyCodexTask("play Midnight City on YouTube")).toBe("media");
+    expect(classifyCodexTask("control Spotify")).toBe("media");
+    expect(classifyCodexTask("play chess in Chrome")).toBe("computer");
+    expect(classifyCodexTask("create a game in my workspace")).toBe("general");
   });
 });
