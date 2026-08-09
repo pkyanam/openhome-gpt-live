@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.5 - 2026-08-09
+
+- Make browser media playback single-flight so repeated or slightly different
+  handoffs cannot start concurrent songs, videos, tabs, or windows.
+- Give media tasks a strict one-tab, one-result, one-stream execution contract
+  and require Codex to stop as soon as playback begins.
+- Treat `speak_to_user` as a terminal boundary and interrupt the Codex turn after
+  its final acknowledgement so computer use cannot continue clicking afterward.
+- Stop media tasks after 90 seconds or 12 actions, direct computer tasks after
+  two minutes or 20 actions, and ordinary delegated tasks after five minutes.
+- Suppress late tool calls from already completed task threads and add coverage
+  for replay deduplication, terminal speech, interaction caps, and deadlines.
+
 ## 0.3.4 - 2026-08-09
 
 - Start every delegated request in its own ephemeral Codex thread, with up to
