@@ -264,6 +264,21 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(live._capture_command("hw:1")[0], "arecord")
         self.assertEqual(live._playback_command("hw:1")[0], "aplay")
 
+    def test_default_agent_guard_targets_only_firmware_chromium_audio(self):
+        self.assertTrue(live._is_default_agent_audio_stream({
+            "properties": {
+                "application.name": "Chromium input",
+                "application.process.binary": "chromium",
+            },
+        }))
+        self.assertFalse(live._is_default_agent_audio_stream({
+            "properties": {
+                "application.name": "OpenHome GPT Live",
+                "application.process.binary": "pacat",
+            },
+        }))
+        self.assertFalse(live._is_default_agent_audio_stream({"properties": {}}))
+
     def test_voicehat_capture_uses_the_right_channel(self):
         stereo = array.array("h", [1, 10, 2, 20, 3, 30]).tobytes()
         selected = array.array("h")

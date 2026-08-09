@@ -204,7 +204,7 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
         if (record.codexState === "working") {
           return json({
             error: "codex_task_active",
-            message: "Wait for the active Codex task before changing GPT Live settings.",
+            message: "Wait for active Codex tasks to finish before changing GPT Live settings.",
           }, { status: 409 });
         }
         const liveSessionId = record.liveSessionId;
@@ -224,6 +224,7 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
               delete current.liveSessionId;
               current.connectionState = "reconnecting";
               current.codexState = "idle";
+              current.codexActiveTasks = 0;
               current.codexQueueDepth = 0;
               current.pendingConfirmations = [];
             });
@@ -419,6 +420,7 @@ async function updateDeviceFromAuthResponse(
       record.liveSessionId = sessionId;
       record.connectionState = "connecting";
       record.codexState = "idle";
+      record.codexActiveTasks = 0;
       record.codexQueueDepth = 0;
       if (typeof session?.["model"] === "string") record.selectedModel = session["model"];
       record.pendingConfirmations = [];
@@ -429,6 +431,7 @@ async function updateDeviceFromAuthResponse(
       delete record.liveSessionId;
       record.connectionState = "closed";
       record.codexState = "idle";
+      record.codexActiveTasks = 0;
       record.codexQueueDepth = 0;
       record.pendingConfirmations = [];
     });

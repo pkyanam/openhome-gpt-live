@@ -40,6 +40,8 @@ export interface DeviceRecord {
   wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
+  codexActiveTasks?: number;
+  /** Legacy field retained for persisted 0.3.3 records. */
   codexQueueDepth?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
@@ -72,7 +74,7 @@ export interface PublicDeviceSession {
   wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
-  codexQueueDepth?: number;
+  codexActiveTasks?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
   lastVoiceRoute?: "native" | "openai_search" | "codex";
@@ -220,12 +222,14 @@ export class DeviceRegistry {
         case "session.started":
           record.connectionState = "live";
           record.codexState = "idle";
+          record.codexActiveTasks = 0;
           record.codexQueueDepth = 0;
           delete record.lastError;
           break;
         case "session.closed":
           record.connectionState = "closed";
           record.codexState = "idle";
+          record.codexActiveTasks = 0;
           record.codexQueueDepth = 0;
           delete record.liveSessionId;
           record.pendingConfirmations = [];
@@ -234,9 +238,10 @@ export class DeviceRegistry {
           record.lastVoiceRoute = "codex";
           record.lastVoiceRouteAt = this.now();
           record.codexState = "working";
-          if (event["queued"] === true) {
-            record.codexQueueDepth = Math.max(0, (record.codexQueueDepth ?? 0) - 1);
-          }
+          record.codexActiveTasks = typeof event["activeCount"] === "number"
+            ? Math.max(1, Math.floor(event["activeCount"]))
+            : Math.max(1, (record.codexActiveTasks ?? 0) + 1);
+          record.codexQueueDepth = 0;
           break;
         case "handoff.redirected":
           if (event["destination"] === "native") {
@@ -248,19 +253,17 @@ export class DeviceRegistry {
           record.lastVoiceRoute = "openai_search";
           record.lastVoiceRouteAt = this.now();
           break;
-        case "handoff.queued":
-          record.codexState = "working";
-          if (typeof event["position"] === "number") {
-            record.codexQueueDepth = Math.max(0, Math.floor(event["position"]));
-          }
-          break;
         case "handoff.completed": {
           const status = event["status"];
           if (status === "completed" || status === "failed" || status === "interrupted") {
             record.lastCodexTaskStatus = status;
             record.lastCodexTaskAt = this.now();
           }
-          record.codexState = (record.codexQueueDepth ?? 0) > 0 ? "working" : "idle";
+          record.codexActiveTasks = typeof event["activeCount"] === "number"
+            ? Math.max(0, Math.floor(event["activeCount"]))
+            : Math.max(0, (record.codexActiveTasks ?? 1) - 1);
+          record.codexState = record.codexActiveTasks > 0 ? "working" : "idle";
+          record.codexQueueDepth = 0;
           break;
         }
         case "tool.pending_confirmation": {
@@ -307,7 +310,7 @@ export class DeviceRegistry {
       ...(record.wakePhrase ? { wakePhrase: record.wakePhrase } : {}),
       ...(record.connectionState ? { connectionState: record.connectionState } : {}),
       ...(record.codexState ? { codexState: record.codexState } : {}),
-      ...(record.codexQueueDepth !== undefined ? { codexQueueDepth: record.codexQueueDepth } : {}),
+      ...(record.codexActiveTasks !== undefined ? { codexActiveTasks: record.codexActiveTasks } : {}),
       ...(record.lastCodexTaskStatus ? { lastCodexTaskStatus: record.lastCodexTaskStatus } : {}),
       ...(record.lastCodexTaskAt !== undefined ? { lastCodexTaskAt: record.lastCodexTaskAt } : {}),
       ...(record.lastVoiceRoute ? { lastVoiceRoute: record.lastVoiceRoute } : {}),

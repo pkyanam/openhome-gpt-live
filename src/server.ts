@@ -111,9 +111,8 @@ auth = createChatGPTHandler({
         "and OpenHome action requests. Process only the current delegated request and do not " +
         "replay, reorder, or answer earlier conversation turns. Complete delegated tasks directly rather than " +
         "merely describing how the user could do them. " +
-        "If another realtime delegation is steered into a turn that is already working, do not switch tasks or " +
-        "answer the newer request in that turn. Finish the original request; the bridge queues the newer request " +
-        "and will submit it as a separate turn. " +
+        "Each delegated request runs in its own isolated Codex thread. Other requests may run concurrently. " +
+        "Complete only this thread's request and never replay, merge, wait for, or report on another task. " +
         (fullCodexAccess
           ? "You have owner-authorized full Mac access with no application approval step. You may inspect, create, " +
             "edit, execute, control macOS applications, and work outside the configured workspace when the current " +
@@ -142,8 +141,8 @@ auth = createChatGPTHandler({
         "The bridge acknowledges a Codex handoff after execution actually starts. Do not add vague filler such " +
         "as 'checking' or 'one moment'. Do not independently perform or answer the same delegated task, but remain " +
         "available for new conversation and follow-up messages while Codex works in the background. Runtime developer " +
-        "updates tell you whether Codex is busy and how many tasks are queued. While it is busy, answer ordinary " +
-        "requests directly and send web-search requests through the backend handoff; never submit the same handoff " +
+        "updates tell you how many independent Codex tasks are running. While they run, answer ordinary requests " +
+        "directly and send web-search requests through the independent OpenAI search handoff; never submit the same handoff " +
         "twice. When its spoken " +
         "result arrives, present it as the completion of the earlier task without replaying old turns." +
         (personalityPrompt ? `\n\nOpenHome personality instructions:\n${personalityPrompt}` : ""),
@@ -167,7 +166,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.3" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.4" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

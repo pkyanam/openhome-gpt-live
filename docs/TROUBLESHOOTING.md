@@ -137,12 +137,13 @@ return to `live`, then say the wake name and request once more. A persistent
 named tunnel is recommended when Quick Tunnel logs also show intermittent 502
 responses.
 
-## Codex finishes silently or mixes requests
+## Codex finishes silently, mixes requests, or delays a second task
 
-Version 0.2.0 serializes and deduplicates Codex handoffs, acknowledges accepted
-work, isolates queued turns, and guarantees a fallback completion announcement.
-Upgrade both host and Ability. Confirm `codex --version` and `codex login
-status` work for the same host user, then inspect `data/server-error.log`.
+Upgrade to 0.3.4 or newer. Each request now receives an isolated Codex thread
+and up to four tasks can run in parallel. The bridge acknowledges every accepted
+task, correlates its tools and completion by thread id, and guarantees a fallback
+completion announcement. Confirm `codex --version` and `codex login status`
+work for the same host user, then inspect `data/server-error.log`.
 
 ## The date or time is stale
 
@@ -229,9 +230,11 @@ restarting it.
 ## Both OpenHome and GPT Live answer
 
 OpenHome's public Ability SDK does not expose a provider-registration hook.
-Enable the built-in Agent wake word and change it to a reserved recovery phrase,
-then restart the Agent. Do not disable the built-in wake word; that can make the
-default pipeline answer ambient speech.
+Version 0.3.4 suppresses only the firmware dashboard's Chromium microphone and
+speaker streams while GPT Live owns audio. It leaves GPT Live, PipeWire, device
+management, and the dashboard process running. The watchdog reapplies the mute
+if a firmware or browser restart recreates those streams. Stopping GPT Live
+restores the default Agent streams.
 
 ## Firmware version
 
