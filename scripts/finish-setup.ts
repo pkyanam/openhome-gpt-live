@@ -9,6 +9,7 @@ const envPath = process.env.OPENHOME_GPT_ENV_FILE
   : resolve(projectRoot, ".env");
 const env = await readEnvFile(envPath);
 const args = process.argv.slice(2);
+const wakePhrase = env.OPENHOME_GPT_LIVE_WAKE_PHRASE || "juniper";
 
 if (args.includes("--help") || args.includes("-h")) {
   console.log(`Finish OpenHome GPT Live setup
@@ -38,10 +39,12 @@ console.log("1. Open https://app.openhome.com/dashboard/settings and add these T
 console.log("   Link both to the OpenHome GPT Live Ability.\n");
 console.log(`   openhome_gpt_live_server_url\n   ${env.PUBLIC_BASE_URL}\n`);
 console.log(`   openhome_gpt_live_bootstrap_token\n   ${env.DEVKIT_BOOTSTRAP_TOKEN}\n`);
+console.log("   Optional initial wake name:");
+console.log(`   openhome_gpt_live_wake_phrase\n   ${wakePhrase}\n`);
 console.log("2. In My Abilities, install and enable OpenHome GPT Live on the active Agent.");
 console.log("   If it is not already uploaded, use dist/openhome-gpt-live-ability.zip.");
 console.log("3. Tap Sync Abilities, restart the Agent, then send `gpt live diagnostics` once in Activity.");
-console.log("   That one message bootstraps firmware 1.0.8; normal voice requests use Juniper.\n");
+console.log(`   That one message bootstraps firmware 1.0.8; normal requests begin with “${wakePhrase}.”\n`);
 
 if (args.includes("--print-only")) {
   console.log("When those steps are complete, run `bun run finish` to retrieve the pairing link.");

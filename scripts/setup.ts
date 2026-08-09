@@ -55,6 +55,11 @@ try {
       options.email ?? configured("APP_ALLOWED_CHATGPT_EMAIL"),
       validateOptionalEmail,
     );
+  const wakePhrase = await requiredValue(
+    "Wake name (required before every request)",
+    (options.wakeName ?? configured("OPENHOME_GPT_LIVE_WAKE_PHRASE")) || "juniper",
+    validateWakePhrase,
+  );
 
   const workspaceDefault = options.workspace
     ?? configured("CODEX_WORKSPACE")
@@ -89,6 +94,7 @@ try {
     OPENHOME_API_KEY: openHomeApiKey,
     OPENHOME_API_BASE: configured("OPENHOME_API_BASE") || "https://app.openhome.com",
     APP_ALLOWED_CHATGPT_EMAIL: email.toLowerCase(),
+    OPENHOME_GPT_LIVE_WAKE_PHRASE: wakePhrase,
     CODEX_WORKSPACE: workspace,
     CODEX_MAC_CONTROL: access,
     GPT_LIVE_PERSONALITY_PROMPT: configured("GPT_LIVE_PERSONALITY_PROMPT"),
@@ -109,6 +115,7 @@ try {
   console.log(`HTTPS: ${publicBaseUrl || "configure later"}`);
   console.log(`Codex workspace: ${workspace}`);
   console.log(`Codex access: ${access === "disabled" ? "workspace only" : access}`);
+  console.log(`Wake name: ${wakePhrase}`);
   console.log(`OpenHome API automation: ${openHomeApiKey ? "enabled" : "not configured"}`);
   if (publicBaseUrl && email) {
     console.log("\nReady for the host service. Run `bun run finish` for the OpenHome and ChatGPT handoff.");
@@ -259,6 +266,7 @@ function parseOptions(values: string[]): {
   tunnel?: TunnelMode;
   hostname?: string;
   tunnelName?: string;
+  wakeName?: string;
 } {
   const parsed = { help: false, nonInteractive: false } as ReturnType<typeof parseOptions>;
   for (let index = 0; index < values.length; index += 1) {
@@ -284,6 +292,8 @@ function parseOptions(values: string[]): {
     else if (value.startsWith("--hostname=")) parsed.hostname = value.slice(11);
     else if (value === "--tunnel-name") parsed.tunnelName = next();
     else if (value.startsWith("--tunnel-name=")) parsed.tunnelName = value.slice(14);
+    else if (value === "--wake-name") parsed.wakeName = next();
+    else if (value.startsWith("--wake-name=")) parsed.wakeName = value.slice(12);
     else throw new TypeError(`Unknown setup option: ${value}. Run bun run setup -- --help.`);
   }
   return parsed;
@@ -308,6 +318,15 @@ function validateEmail(value: string): string | undefined {
 
 function validateOptionalEmail(value: string): string | undefined {
   return value ? validateEmail(value) : undefined;
+}
+
+function validateWakePhrase(value: string): string | undefined {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, " ");
+  return normalized.length > 0
+    && normalized.length <= 40
+    && /^[a-z][a-z -]*$/.test(normalized)
+    ? undefined
+    : "Use 1–40 English letters, spaces, or hyphens.";
 }
 
 function validatePublicBaseUrl(value: string): string | undefined {
@@ -349,6 +368,7 @@ Options:
   --hostname HOST      DNS hostname for Cloudflare mode
   --tunnel-name NAME   Named Cloudflare Tunnel to create or reuse
   --email EMAIL        ChatGPT account email allowed to authorize
+  --wake-name NAME     Initial wake name (default: Juniper)
   --workspace PATH     Folder available to Codex tools
   --access MODE        workspace, confirmed, or full
   --non-interactive    Use flags, environment, and saved values only
@@ -361,6 +381,7 @@ Secrets:
 
 Examples:
   bun run setup -- --tunnel cloudflare --hostname voice.example.com
+  bun run setup -- --wake-name Vale
   bun run setup -- --tunnel existing --public-url https://voice.example.com
   bun run setup -- --tunnel later
   bun run setup -- --non-interactive --tunnel existing \\

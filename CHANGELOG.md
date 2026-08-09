@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 - 2026-08-08
+
+- Fixed a runaway false-wake loop where speaker/ambient audio was accepted as
+  broad “Juniper” phonetic aliases and repeatedly activated GPT Live.
+- Removed per-wake developer timestamp injection, which could make `/wm`
+  recite the date/time instead of answering the owner's actual request.
+- Exact date/time now comes from the app-server's on-demand
+  `currentTime/read` provider without creating a realtime turn.
+- Kept the active request gate through assistant playback so explicit
+  wake-name barge-in remains available without reopening the ordinary detector
+  into the speaker's own audio.
+- Added server-owned voice and wake-name settings to `/setup`, including all
+  nine voice names as presets and validated custom English names.
+- Added `--wake-name` to interactive and non-interactive setup, and updated the
+  installer, finish handoff, Ability, project site, agent skill, and docs.
+
 ## 0.3.0 - 2026-08-08
 
 - Replace fragmented onboarding with an idempotent interactive installer,

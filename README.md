@@ -1,7 +1,8 @@
 # OpenHome GPT Live
 
 Turn an OpenHome DevKit into a wake-word GPT Live speaker with OpenAI web
-search and optional local Codex tools. Say **“Juniper, …”** before every request.
+search and optional local Codex tools. Start every request with your chosen
+wake name—**“Juniper, …”** by default.
 
 [Explore the project site](https://pkyanam.github.io/openhome-gpt-live/) ·
 [Troubleshooting](docs/TROUBLESHOOTING.md) ·
@@ -90,7 +91,8 @@ cd ~/.openhome-gpt-live
 bun run finish
 ```
 
-This prints the exact two OpenHome Third Party Keys and walks through the only
+This prints the exact two required OpenHome Third Party Keys plus the optional
+initial wake-name key, and walks through the only
 steps the host cannot perform for you:
 
 1. Link the printed server URL and bootstrap token to **OpenHome GPT Live**.
@@ -101,7 +103,8 @@ steps the host cannot perform for you:
 4. Press Enter in the wizard. It retrieves the DevKit pairing code from the
    host—speaker audio and raw log inspection are not required.
 5. Open the printed `/setup` link in any trusted browser and complete Login with
-   ChatGPT device-code authorization.
+   ChatGPT device-code authorization. Choose the speaking voice and wake name
+   on that same page.
 
 The browser is a setup/control surface served by this bridge. It can be on the
 host, another computer, a phone, or a tablet; it is **not** embedded in the
@@ -129,6 +132,7 @@ Agent or unattended host preparation:
   --tunnel existing \
   --public-url https://voice.example.com \
   --email user@example.com \
+  --wake-name Vale \
   --workspace /srv/juniper \
   --access workspace \
   --skip-finish
@@ -148,7 +152,7 @@ bun run finish -- --help
 
 ## Verify the speaker
 
-Try these in order:
+Try these in order, replacing “Juniper” if you selected another wake name:
 
 > “Juniper, explain photosynthesis in two sentences.”
 
@@ -157,7 +161,8 @@ Try these in order:
 > “Juniper, create a small web game in my workspace and tell me when it is
 > done.”
 
-“Juniper” is required for every new request, including interruptions. The
+The configured wake name is required for every new request, including
+interruptions. The
 offline gate runs locally, closes again after every answer, and keeps the same
 GPT Live session so conversation context survives.
 
@@ -170,12 +175,18 @@ GPT Live session so conversation context survives.
 Search and Codex work run independently. Codex tasks are serialized,
 acknowledged when they start, and announced through GPT Live when they finish.
 
-## Voices and access
+## Voices, wake names, and access
 
 Choose Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol, Spruce, or Vale on the
-paired `/setup` page. Vale is the new-device default. Changing the voice
-reconnects GPT Live automatically; the wake phrase remains Juniper unless its
-optional Third Party Key is changed.
+paired `/setup` page. Vale is the new-device voice default. Choose any of those
+names as a wake preset or enter a custom English wake name. Juniper is the
+default. Saving either setting reconnects GPT Live automatically while keeping
+the device pairing and ChatGPT authorization. The new wake name is then
+required before every request and interruption.
+
+For unattended initial setup, pass `--wake-name NAME`. After pairing, the
+server-owned `/setup` selection takes precedence and survives Ability syncs and
+Agent restarts.
 
 Codex defaults to **Workspace only**:
 

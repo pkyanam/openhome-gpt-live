@@ -54,8 +54,10 @@ page is hosted by the Mac/Linux bridge; it is not embedded in OpenHome mobile.
 The raw pairing code is
 stored only in a short-lived private local inbox and is deleted after claim.
 
-Choose the GPT Live speaking voice on the same page. Voice changes restart the
-Live connection automatically; the wake phrase is configured separately.
+Choose the GPT Live speaking voice and wake name on the same page. The voice
+names are offered as wake presets, or enter a custom English name. Saving
+restarts the Live connection automatically while preserving pairing and
+ChatGPT authorization.
 
 ## Upgrade
 
@@ -100,9 +102,10 @@ OpenHome Third Party Key, then sync and restart. Changing `LWC_SECRET`
 invalidates saved ChatGPT login and browser-pairing state. Back up `.env` and
 `data/` together.
 
-The optional `openhome_gpt_live_voice` Third Party Key is only the initial
-default for a newly enrolled DevKit. After pairing, use the browser picker; its
-server-owned choice survives Ability syncs and Agent restarts.
+The optional `openhome_gpt_live_voice` and
+`openhome_gpt_live_wake_phrase` Third Party Keys are initial defaults for a
+newly enrolled DevKit. After pairing, use the browser controls; their
+server-owned choices survive Ability syncs and Agent restarts.
 
 ## Stop or remove
 
@@ -125,6 +128,7 @@ curl -fsSL https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/inst
     --tunnel existing \
     --public-url https://voice.example.com \
     --email user@example.com \
+    --wake-name Maple \
     --workspace /srv/juniper-workspace \
     --access workspace \
     --skip-finish

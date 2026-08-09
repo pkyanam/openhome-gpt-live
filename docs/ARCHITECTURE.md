@@ -23,6 +23,7 @@ Browser /setup control page
   one-time DevKit pairing
   ChatGPT device authorization
   GPT Live voice selection
+  wake-name selection
   consequential-action approvals
 ```
 
@@ -34,12 +35,14 @@ README. `background.py` starts with the OpenHome Personality session and keeps
 the DevKit worker running. Where systemd is available, the worker also installs
 a per-user service so it returns after a power cycle.
 
-PocketSphinx detects the configured wake phrase locally. While armed, the
-WebRTC microphone track contains silence. After “Juniper,” the worker forwards
-real microphone frames until remote answer audio begins after the near-end
-request falls silent, then re-arms. A timeout closes failed turns even when
-`/wm` emits no state event. Every new request and mid-answer interruption
-requires the wake phrase. Re-arming changes only this local microphone gate:
+PocketSphinx detects the exact configured wake name locally. Juniper is the
+default; voice-name presets and custom English names are supported. While
+armed, the WebRTC microphone track contains silence. After the wake name, the
+worker forwards real microphone frames. During assistant playback the current
+turn stays open for an explicit wake-name barge-in; the ordinary gate re-arms
+only after playback ends. A timeout closes failed turns even when `/wm` emits
+no state event. Every new request and mid-answer interruption requires the wake
+name. Re-arming changes only this local microphone gate:
 the WebRTC connection and GPT Live conversation remain open, preserving context
 across wake-word-gated follow-ups.
 
@@ -70,8 +73,9 @@ channel transcripts or capturing ChatGPT browser cookies.
 
 The host classifies every native handoff before Codex accepts it:
 
-- Clock questions return to GPT Live, which receives a fresh owner-local clock
-  context for every wake request.
+- Clock questions remain in GPT Live. The `/wm` app server answers
+  `currentTime/read` from the host clock on demand; timestamp metadata is never
+  appended as a response-producing wake turn.
 - Explicit/current web requests call the authenticated ChatGPT Responses
   endpoint with `tools: [{ type: "web_search" }]`. The parser rejects a result
   unless response usage proves that web search actually ran.
@@ -104,19 +108,19 @@ and log access are optional.
 
 The browser profile opened to `/setup` receives a distinct HttpOnly pairing
 cookie. It can complete ChatGPT device authorization, approve pending actions,
-and select one of the SDK's nine known GPT Live voices. It may run on the host,
-another computer, a phone, or a tablet; it is not an OpenHome-mobile surface.
-A voice change updates server-owned device settings and closes the current Live
-session. The DevKit watchdog reconnects, reads the new setting through its
-device credential, and negotiates the new voice. Wake phrase configuration
-remains independent.
+select one of the SDK's nine known GPT Live voices, and choose a wake-name
+preset or custom English name. It may run on the host, another computer, a
+phone, or a tablet; it is not an OpenHome-mobile surface. A settings change
+updates the server-owned device record and closes the current Live session. The
+DevKit watchdog reconnects, reads both settings through its device credential,
+and rebuilds the local wake detector. Voice and wake name remain independent.
 
 ## Lifecycle
 
 - Host launchd/systemd restarts the Bun bridge after failure or reboot.
 - DevKit systemd/OpenHome monitoring restarts the audio worker.
 - GPT Live sessions rotate after 30 minutes and reconnect automatically.
-- A fresh owner-local clock context is injected for every wake request.
+- Exact clock reads come from the host on demand without turn injection.
 - Disabling the Ability and restarting the Agent stops the provider.
 - A stable HTTPS hostname is required; a changing tunnel URL strands the
   DevKit on its old server address.

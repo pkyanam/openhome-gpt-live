@@ -80,13 +80,13 @@ class DevKitProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be one of"):
             live._validate_voice("made-up")
 
-    def test_syncs_browser_selected_voice_before_live_connects(self):
+    def test_syncs_browser_selected_voice_and_wake_name_before_live_connects(self):
         class Response:
             def raise_for_status(self):
                 return None
 
             def json(self):
-                return {"voice": "vale"}
+                return {"voice": "vale", "wakePhrase": "maple"}
 
         class Client:
             def __init__(self):
@@ -100,7 +100,11 @@ class DevKitProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             live.CONFIG_FILE = Path(directory) / "config.json"
             client = Client()
-            config = {"device_id": "dev_1", "voice": "juniper"}
+            config = {
+                "device_id": "dev_1",
+                "voice": "juniper",
+                "wake_phrase": "juniper",
+            }
             try:
                 asyncio.run(live._sync_device_settings(client, config))
                 saved = json.loads(live.CONFIG_FILE.read_text(encoding="utf-8"))
@@ -109,7 +113,9 @@ class DevKitProtocolTests(unittest.TestCase):
 
         self.assertEqual(client.paths, ["/api/device/dev_1/settings"])
         self.assertEqual(config["voice"], "vale")
+        self.assertEqual(config["wake_phrase"], "maple")
         self.assertEqual(saved["voice"], "vale")
+        self.assertEqual(saved["wake_phrase"], "maple")
 
     def test_reconnects_in_process_and_applies_a_new_browser_voice(self):
         voices = []
@@ -256,29 +262,34 @@ class DevKitProtocolTests(unittest.TestCase):
         downsampled.frombytes(live._downsample_48k_to_16k(source))
         self.assertEqual(downsampled.tolist(), [6, 15])
 
-    def test_juniper_wake_grammar_accepts_common_pronunciations(self):
+    def test_wake_grammar_uses_only_the_configured_name(self):
         aliases = live._wake_phrase_aliases("Juniper")
-        self.assertIn("juniper", aliases)
-        self.assertIn("june it for", aliases)
+        self.assertEqual(aliases, ("juniper",))
         self.assertEqual(live._wake_phrase_aliases("Hey-Home"), ("hey home",))
 
-    def test_wake_grammar_requires_three_confident_frames(self):
+    def test_wake_grammar_requires_stable_exact_confident_frames(self):
         aliases = live._wake_phrase_aliases("juniper")
         frames = 0
         for _ in range(live.WAKE_CONFIRM_FRAMES - 1):
             frames, confirmed = live._advance_wake_confirmation(
-                frames, "june a per", 0.85, aliases
+                frames, "juniper", 0.85, aliases
             )
             self.assertFalse(confirmed)
 
         frames, confirmed = live._advance_wake_confirmation(
-            frames, "june a per", 0.85, aliases
+            frames, "juniper", 0.85, aliases
         )
         self.assertTrue(confirmed)
         self.assertEqual(frames, 0)
 
         frames, confirmed = live._advance_wake_confirmation(
-            2, "june a per", 0.79, aliases
+            2, "juniper", 0.79, aliases
+        )
+        self.assertFalse(confirmed)
+        self.assertEqual(frames, 0)
+
+        frames, confirmed = live._advance_wake_confirmation(
+            live.WAKE_CONFIRM_FRAMES - 1, "june a per", 0.99, aliases
         )
         self.assertFalse(confirmed)
         self.assertEqual(frames, 0)
@@ -299,32 +310,6 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertFalse(should_reset)
         self.assertEqual(frames, 0)
 
-    def test_refreshes_clock_through_authenticated_live_session(self):
-        class Response:
-            def raise_for_status(self):
-                return None
-
-        class Client:
-            def __init__(self):
-                self.requests = []
-
-            async def post(self, path, json):
-                self.requests.append((path, json))
-                return Response()
-
-        client = Client()
-        refreshed = asyncio.run(live._refresh_clock_context(
-            client,
-            {"device_id": "dev_1"},
-            "live_1",
-        ))
-
-        self.assertTrue(refreshed)
-        self.assertEqual(client.requests, [(
-            "/api/device/dev_1/chatgpt/realtime/app-server/live_1/clock",
-            {},
-        )])
-
     def test_returns_to_armed_mode_after_timeout_even_without_wm_state_events(self):
         wake = {"active": True, "last_activity": 100.0, "idle_seconds": 30}
         self.assertTrue(
@@ -340,16 +325,26 @@ class DevKitProtocolTests(unittest.TestCase):
             live._should_return_to_wake_mode(wake, {"value": "connected"}, now=130.0)
         )
 
-    def test_response_audio_rearms_only_after_user_speech_ends(self):
+    def test_response_audio_rearms_only_after_playback_and_user_speech_end(self):
         wake = {
             "active": True,
             "assistant_response_seen": True,
-            "last_user_speech": 100.0,
+            "last_user_speech": 99.0,
         }
-        self.assertFalse(live._should_arm_after_response_audio(wake, now=100.79))
-        self.assertTrue(live._should_arm_after_response_audio(wake, now=100.81))
+        playback = {"last_audible_at": 100.0, "playing_until": 100.2}
+        self.assertFalse(live._should_arm_after_response_audio(
+            wake, playback, now=100.1
+        ))
+        self.assertFalse(live._should_arm_after_response_audio(
+            wake, playback, now=100.59
+        ))
+        self.assertTrue(live._should_arm_after_response_audio(
+            wake, playback, now=100.61
+        ))
         wake["assistant_response_seen"] = False
-        self.assertFalse(live._should_arm_after_response_audio(wake, now=120.0))
+        self.assertFalse(live._should_arm_after_response_audio(
+            wake, playback, now=120.0
+        ))
 
     def test_rearming_closes_mic_and_clears_stale_wake_audio(self):
         class Detector:
@@ -590,13 +585,13 @@ class DevKitProtocolTests(unittest.TestCase):
             "playing_until": now + 0.2,
         }
         self.assertFalse(live._wake_allowed_during_playback(
-            live.WAKE_INTERRUPT_MIN_RMS - 1,
+            119,
             {"value": "connecting"},
             playback,
             now,
         ))
-        self.assertTrue(live._wake_allowed_during_playback(
-            live.WAKE_INTERRUPT_MIN_RMS + 1,
+        self.assertFalse(live._wake_allowed_during_playback(
+            2_000,
             {"value": "connecting"},
             playback,
             now,

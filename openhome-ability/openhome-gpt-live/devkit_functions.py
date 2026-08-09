@@ -57,11 +57,10 @@ RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
 WAKE_PREROLL_FRAMES = 25
 WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
-WAKE_CONFIRM_FRAMES = 3
+WAKE_CONFIRM_FRAMES = 5
 WAKE_SILENCE_RMS = 20.0
 WAKE_SILENCE_FRAMES = 25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
-WAKE_INTERRUPT_MIN_RMS = 120.0
 PLAYBACK_AUDIBLE_RMS = 20.0
 PLAYBACK_UTTERANCE_GAP_SECONDS = 0.6
 PLAYBACK_INTERRUPT_CUTOFF_SECONDS = 1.2
@@ -90,7 +89,12 @@ def configure_and_start(
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         existing = _read_json(CONFIG_FILE, default={})
         requested_voice = _validate_voice(voice)
-        request_body = {"name": "OpenHome DevKit", "voice": requested_voice}
+        requested_wake_phrase = _validate_wake_phrase(wake_phrase)
+        request_body = {
+            "name": "OpenHome DevKit",
+            "voice": requested_voice,
+            "wakePhrase": requested_wake_phrase,
+        }
         if (
             existing.get("server_url") == server_url
             and existing.get("device_id")
@@ -109,13 +113,20 @@ def configure_and_start(
                     client,
                     server_url,
                     bootstrap_token,
-                    {"name": "OpenHome DevKit", "voice": requested_voice},
+                    {
+                        "name": "OpenHome DevKit",
+                        "voice": requested_voice,
+                        "wakePhrase": requested_wake_phrase,
+                    },
                 )
             response.raise_for_status()
             registration = response.json()
             registered_session = registration.get("session", {})
             configured_voice = _validate_voice(
                 registered_session.get("voice") or requested_voice
+            )
+            configured_wake_phrase = _validate_wake_phrase(
+                registered_session.get("wakePhrase") or requested_wake_phrase
             )
             config = {
                 "server_url": server_url,
@@ -126,7 +137,7 @@ def configure_and_start(
                 "voice": configured_voice,
                 "capture_device": str(capture_device).strip() or "default",
                 "playback_device": str(playback_device).strip() or "default",
-                "wake_phrase": _validate_wake_phrase(wake_phrase),
+                "wake_phrase": configured_wake_phrase,
                 "active_idle_seconds": _validate_active_idle_seconds(active_idle_seconds),
                 "max_session_seconds": 30 * 60,
                 **({
@@ -357,11 +368,19 @@ async def _sync_device_settings(client, config):
     """Apply server-owned browser settings before negotiating a new Live call."""
     response = await client.get(_device_settings_path(config))
     response.raise_for_status()
+    settings = response.json()
     configured_voice = _validate_voice(
-        response.json().get("voice") or config.get("voice", DEFAULT_VOICE)
+        settings.get("voice") or config.get("voice", DEFAULT_VOICE)
     )
-    if configured_voice != config.get("voice"):
+    configured_wake_phrase = _validate_wake_phrase(
+        settings.get("wakePhrase") or config.get("wake_phrase", DEFAULT_WAKE_PHRASE)
+    )
+    if (
+        configured_voice != config.get("voice")
+        or configured_wake_phrase != config.get("wake_phrase")
+    ):
         config["voice"] = configured_voice
+        config["wake_phrase"] = configured_wake_phrase
         _write_private_json(CONFIG_FILE, config)
     return config
 
@@ -403,7 +422,6 @@ async def _run_live_session(client, config, model, stop_event):
         "playing_until": 0.0,
     }
     data_channel_holder = {"channel": None}
-    live_session_id_holder = {"value": None}
     seen_data_event_types = set()
 
     class AlsaInputTrack(MediaStreamTrack):
@@ -495,12 +513,6 @@ async def _run_live_session(client, config, model, stop_event):
                             playback_control,
                             wake_word=True,
                         )
-                        session_id = live_session_id_holder["value"]
-                        if session_id:
-                            # Refresh the Mac clock before forwarding this
-                            # request so time answers cannot use a stale
-                            # session-start snapshot.
-                            await _refresh_clock_context(client, config, session_id)
                         _write_status(
                             "live",
                             message=f"{wake_state['phrase'].title()} heard. GPT Live is listening.",
@@ -518,8 +530,12 @@ async def _run_live_session(client, config, model, stop_event):
                     now = time.monotonic()
                     if _pcm_rms(data) >= REQUEST_SPEECH_RMS:
                         wake_state["last_user_speech"] = now
-                    if _should_arm_after_response_audio(wake_state, now):
-                        self.arm_for_next_request("the assistant response began after the request ended")
+                    if _should_arm_after_response_audio(
+                        wake_state,
+                        playback_control,
+                        now,
+                    ):
+                        self.arm_for_next_request("the assistant response finished")
                         _write_armed_status(config, model, wake_state["phrase"])
                         data = bytes(AUDIO_BYTES)
                     else:
@@ -546,12 +562,6 @@ async def _run_live_session(client, config, model, stop_event):
                         )
                         if wake_interrupt:
                             wake_state["last_activity"] = now
-                            session_id = live_session_id_holder["value"]
-                            if session_id:
-                                # The next spoken request may be a clock question.
-                                # Refresh after cutting playback but before its
-                                # content reaches the remote model.
-                                await _refresh_clock_context(client, config, session_id)
             frame = AudioFrame(format="s16", layout="mono", samples=AUDIO_SAMPLES)
             frame.planes[0].update(data)
             frame.sample_rate = AUDIO_RATE
@@ -692,7 +702,6 @@ async def _run_live_session(client, config, model, stop_event):
     response.raise_for_status()
     signaling = response.json()
     live_session_id = signaling["sessionId"]
-    live_session_id_holder["value"] = live_session_id
     await pc.setRemoteDescription(RTCSessionDescription(sdp=signaling["sdp"], type="answer"))
     bridge_task = None
     max_timer = None
@@ -808,18 +817,6 @@ async def _consume_bridge_events(client, config, live_session_id, closed_event):
             elif event_type == "session.closed":
                 closed_event.set()
                 return
-
-
-async def _refresh_clock_context(client, config, live_session_id):
-    path = _device_path(config, f"/realtime/app-server/{live_session_id}/clock")
-    try:
-        response = await client.post(path, json={})
-        response.raise_for_status()
-        log.info("GPT Live owner clock refreshed for the new wake request")
-        return True
-    except Exception as error:
-        log.warning("Could not refresh GPT Live owner clock: %s", error)
-        return False
 
 
 def decode_realtime_event(message):
@@ -1290,12 +1287,10 @@ class WakePhraseDetector:
 
 def _wake_phrase_aliases(phrase):
     normalized = " ".join(str(phrase).replace("-", " ").lower().split())
-    aliases = [normalized]
-    if normalized == "juniper":
-        # PocketSphinx's US acoustic model commonly renders Juniper as these
-        # close word sequences, especially for distant or synthesized speech.
-        aliases.extend(("june it for", "june upper", "june a per"))
-    return tuple(dict.fromkeys(aliases))
+    # Keep the grammar exact. Broad phonetic aliases such as "june it for"
+    # made synthesized playback and ordinary room noise indistinguishable from
+    # an owner saying the configured wake name.
+    return (normalized,)
 
 
 def _advance_wake_confirmation(frame_count, heard, score, aliases):
@@ -1348,11 +1343,18 @@ def _should_return_to_wake_mode(wake_state, remote_state, now=None):
     return now - wake_state["last_activity"] >= wake_state["idle_seconds"]
 
 
-def _should_arm_after_response_audio(wake_state, now=None):
+def _should_arm_after_response_audio(wake_state, playback_control, now=None):
     if not wake_state.get("active") or not wake_state.get("assistant_response_seen"):
         return False
     now = time.monotonic() if now is None else now
-    return now - wake_state.get("last_user_speech", now) >= REQUEST_END_SILENCE_SECONDS
+    last_audible_at = playback_control.get("last_audible_at", 0.0)
+    if last_audible_at <= 0.0:
+        return False
+    return (
+        now >= playback_control.get("playing_until", 0.0)
+        and now - last_audible_at >= PLAYBACK_UTTERANCE_GAP_SECONDS
+        and now - wake_state.get("last_user_speech", now) >= REQUEST_END_SILENCE_SECONDS
+    )
 
 
 def _should_arm_after_response(
@@ -1457,12 +1459,10 @@ def _wake_allowed_during_playback(rms, state, playback_control=None, now=None):
     )
     if not remote_speaking and not local_playback:
         return True
-    if not playback_control:
-        return False
-    return (
-        rms >= WAKE_INTERRUPT_MIN_RMS
-        and now - playback_control.get("started_at", now) >= WAKE_INTERRUPT_GUARD_SECONDS
-    )
+    # A legitimate mid-answer wake is handled by the active-turn barge-in path.
+    # If the ordinary armed gate sees playback, it is an output-tail race or
+    # speaker echo and must never open a new request.
+    return False
 
 
 def _pcm_rms(data):

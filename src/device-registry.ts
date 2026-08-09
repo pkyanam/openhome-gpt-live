@@ -34,6 +34,7 @@ export interface DeviceRecord {
   liveSessionId?: string;
   selectedModel?: string;
   voice?: string;
+  wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
   codexQueueDepth?: number;
@@ -65,6 +66,7 @@ export interface PublicDeviceSession {
   liveSessionId?: string;
   selectedModel?: string;
   voice?: string;
+  wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
   codexQueueDepth?: number;
@@ -90,12 +92,14 @@ export class DeviceRegistry {
     name: string,
     resume?: { deviceId: string; deviceToken: string },
     initialVoice = "vale",
+    initialWakePhrase = "juniper",
   ): Promise<DeviceRegistration> {
     if (resume) {
       let existing = await this.authenticateDevice(resume.deviceId, resume.deviceToken);
-      if (!existing.voice) {
+      if (!existing.voice || !existing.wakePhrase) {
         existing = await this.update(existing.id, (record) => {
-          record.voice = initialVoice;
+          if (!record.voice) record.voice = initialVoice;
+          if (!record.wakePhrase) record.wakePhrase = initialWakePhrase;
         });
       }
       const pairing = existing.claimTokenHash ? undefined : await this.issuePairing(existing.id);
@@ -114,6 +118,7 @@ export class DeviceRegistry {
       deviceTokenHash: this.hash("device", deviceToken),
       loginStatus: "unauthenticated",
       voice: initialVoice,
+      wakePhrase: initialWakePhrase,
       pendingConfirmations: [],
       createdAt: this.now(),
       lastSeenAt: this.now(),
@@ -291,6 +296,7 @@ export class DeviceRegistry {
       ...(record.liveSessionId ? { liveSessionId: record.liveSessionId } : {}),
       ...(record.selectedModel ? { selectedModel: record.selectedModel } : {}),
       ...(record.voice ? { voice: record.voice } : {}),
+      ...(record.wakePhrase ? { wakePhrase: record.wakePhrase } : {}),
       ...(record.connectionState ? { connectionState: record.connectionState } : {}),
       ...(record.codexState ? { codexState: record.codexState } : {}),
       ...(record.codexQueueDepth !== undefined ? { codexQueueDepth: record.codexQueueDepth } : {}),

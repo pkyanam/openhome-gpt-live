@@ -73,23 +73,33 @@ document.querySelectorAll("[data-copy]").forEach((button) => {
 });
 
 const voiceLines = {
-  Arbor: "Grounded and composed, ready when you say “Juniper.”",
-  Breeze: "Light and open, ready when you say “Juniper.”",
-  Cove: "Calm and centered, ready when you say “Juniper.”",
-  Ember: "Bright and energetic, ready when you say “Juniper.”",
-  Juniper: "Crisp and familiar, ready when you say “Juniper.”",
-  Maple: "Friendly and rounded, ready when you say “Juniper.”",
-  Sol: "Clear and optimistic, ready when you say “Juniper.”",
-  Spruce: "Steady and thoughtful, ready when you say “Juniper.”",
-  Vale: "Warm, direct, and ready when you say “Juniper.”",
+  Arbor: "Grounded and composed",
+  Breeze: "Light and open",
+  Cove: "Calm and centered",
+  Ember: "Bright and energetic",
+  Juniper: "Crisp and familiar",
+  Maple: "Friendly and rounded",
+  Sol: "Clear and optimistic",
+  Spruce: "Steady and thoughtful",
+  Vale: "Warm and direct",
 };
+
+const wakeNameInput = document.querySelector("#wake-name");
+
+function renderVoiceLine() {
+  const voice = document.querySelector("#selected-voice").textContent;
+  const wakeName = wakeNameInput.value.trim() || "Juniper";
+  document.querySelector("#voice-line").textContent = `${voiceLines[voice]}, ready when you say “${wakeName}.”`;
+}
 
 document.querySelectorAll("[data-voice]").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll("[data-voice]").forEach((item) => item.classList.toggle("active", item === button));
   const voice = button.dataset.voice;
   document.querySelector("#selected-voice").textContent = voice;
-  document.querySelector("#voice-line").textContent = voiceLines[voice];
+  renderVoiceLine();
 }));
+
+wakeNameInput.addEventListener("input", renderVoiceLine);
 
 const revealItems = document.querySelectorAll(".reveal");
 if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {

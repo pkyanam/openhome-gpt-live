@@ -72,7 +72,7 @@ describe("headless DevKit routes", () => {
       `https://service.test/api/device/${registration.deviceId}/settings`,
       { headers: { authorization: `Bearer ${registration.deviceToken}` } },
     ));
-    expect(await settingsBefore.json()).toEqual({ voice: "vale" });
+    expect(await settingsBefore.json()).toEqual({ voice: "vale", wakePhrase: "juniper" });
 
     const deviceBase = `https://service.test/api/device/${registration.deviceId}/chatgpt`;
     const loginResponse = await route(new Request(`${deviceBase}/login`, {
@@ -151,15 +151,19 @@ describe("headless DevKit routes", () => {
     expect(busyVoiceResponse.status).toBe(409);
     await registry.update(registration.deviceId, (record) => { record.codexState = "idle"; });
 
-    const voiceResponse = await route(jsonRequest("https://service.test/api/pairing/voice", {
+    const voiceResponse = await route(jsonRequest("https://service.test/api/pairing/settings", {
       method: "POST",
       cookie: pairingCookie,
-      body: { voice: "vale" },
+      body: { voice: "vale", wakePhrase: "maple" },
     }));
     expect(voiceResponse.status).toBe(200);
     expect(await voiceResponse.json()).toMatchObject({
       reconnecting: true,
-      session: { voice: "vale", connectionState: "reconnecting" },
+      session: {
+        voice: "vale",
+        wakePhrase: "maple",
+        connectionState: "reconnecting",
+      },
     });
     expect(internalRequests.some((request) =>
       request.method === "DELETE"
@@ -172,6 +176,13 @@ describe("headless DevKit routes", () => {
       body: { voice: "made-up" },
     }));
     expect(invalidVoice.status).toBe(400);
+
+    const invalidWakePhrase = await route(jsonRequest("https://service.test/api/pairing/settings", {
+      method: "POST",
+      cookie: pairingCookie,
+      body: { voice: "vale", wakePhrase: "juniper!" },
+    }));
+    expect(invalidWakePhrase.status).toBe(400);
     expect(internalRequests.every((request) => !request.headers.has("authorization"))).toBeTrue();
     expect(internalRequests.slice(1).every((request) => request.headers.get("cookie") === "lwc_session=opaque-login-cookie")).toBeTrue();
   });

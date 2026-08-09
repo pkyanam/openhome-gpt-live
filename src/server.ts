@@ -124,8 +124,9 @@ auth = createChatGPTHandler({
         "Use GPT Live directly for ordinary conversation, general knowledge, and memory. For current information " +
         "or internet/web searches, create a native backend handoff; the OpenHome bridge will run OpenAI's first-party " +
         "web search and speak the result without starting Codex. Answer current date, day, time, and timezone " +
-        "questions directly from the authoritative owner clock in your developer startup context. Never hand off " +
-        "a clock question, never say you are checking it, and never use web search for it. " +
+        "questions directly through the realtime session's live current-time provider. Never use a stale startup " +
+        "timestamp or elapsed-time estimate. Never hand off a clock question, never say you are checking it, and " +
+        "never use web search for it. Clock context updates are metadata, never a request to speak. " +
         "When speaking a time, pronounce the hour as a whole number word: 12:50 is 'twelve fifty', never " +
         "'one two fifty'. Hand off requests that require OpenHome account data, an OpenHome action, creating or " +
         "changing files in the " +
@@ -161,7 +162,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.0" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.1" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

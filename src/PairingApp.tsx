@@ -22,6 +22,7 @@ interface PairedSession {
   liveSessionId?: string;
   selectedModel?: string;
   voice?: string;
+  wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
   codexQueueDepth?: number;
@@ -40,11 +41,15 @@ export function PairingApp() {
   ));
   const [session, setSession] = useState<PairedSession>();
   const [voice, setVoice] = useState<ChatGPTRealtimeVoice>("vale");
+  const [wakePhrase, setWakePhrase] = useState("juniper");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
-  const [awaitingVoice, setAwaitingVoice] = useState<ChatGPTRealtimeVoice>();
+  const [awaitingSettings, setAwaitingSettings] = useState<{
+    voice: ChatGPTRealtimeVoice;
+    wakePhrase: string;
+  }>();
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/pairing/session", { credentials: "include" });
@@ -83,15 +88,20 @@ export function PairingApp() {
   }, [session?.voice]);
 
   useEffect(() => {
+    if (session?.wakePhrase) setWakePhrase(session.wakePhrase);
+  }, [session?.wakePhrase]);
+
+  useEffect(() => {
     if (
-      awaitingVoice
+      awaitingSettings
       && session?.connectionState === "live"
-      && session.voice === awaitingVoice
+      && session.voice === awaitingSettings.voice
+      && session.wakePhrase === awaitingSettings.wakePhrase
     ) {
-      setNotice(`${voiceLabel(awaitingVoice)} is live.`);
-      setAwaitingVoice(undefined);
+      setNotice(`${voiceLabel(awaitingSettings.voice)} is live and “${wakeLabel(awaitingSettings.wakePhrase)}” is armed.`);
+      setAwaitingSettings(undefined);
     }
-  }, [awaitingVoice, session?.connectionState, session?.voice]);
+  }, [awaitingSettings, session?.connectionState, session?.voice, session?.wakePhrase]);
 
   async function claim(event: FormEvent) {
     event.preventDefault();
@@ -116,28 +126,35 @@ export function PairingApp() {
     }
   }
 
-  async function saveVoice() {
+  async function saveSettings() {
     setSubmitting(true);
     setError(undefined);
     setNotice(undefined);
     try {
-      const response = await fetch("/api/pairing/voice", {
+      const normalizedWakePhrase = normalizeWakeInput(wakePhrase);
+      if (!normalizedWakePhrase) {
+        throw new Error("Use 1–40 English letters, spaces, or hyphens for the wake name.");
+      }
+      const response = await fetch("/api/pairing/settings", {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ voice }),
+        body: JSON.stringify({ voice, wakePhrase: normalizedWakePhrase }),
       });
       const payload = await response.json() as {
         session?: PairedSession;
         reconnecting?: boolean;
         message?: string;
       };
-      if (!response.ok || !payload.session) throw new Error(payload.message ?? "Voice update failed.");
+      if (!response.ok || !payload.session) throw new Error(payload.message ?? "Settings update failed.");
       setSession(payload.session);
-      setAwaitingVoice(payload.reconnecting ? voice : undefined);
+      setWakePhrase(normalizedWakePhrase);
+      setAwaitingSettings(payload.reconnecting
+        ? { voice, wakePhrase: normalizedWakePhrase }
+        : undefined);
       setNotice(payload.reconnecting
-        ? `${voiceLabel(voice)} saved. GPT Live is reconnecting automatically; this page will return to live.`
-        : `${voiceLabel(voice)} saved. It will be used when GPT Live next connects.`);
+        ? `${voiceLabel(voice)} and “${wakeLabel(normalizedWakePhrase)}” saved. GPT Live is reconnecting automatically.`
+        : `Settings saved. Say “${wakeLabel(normalizedWakePhrase)}” when GPT Live next connects.`);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -219,9 +236,9 @@ export function PairingApp() {
 
           <section className="pairing-card voice-settings-card">
             <div>
-              <p className="eyebrow">GPT LIVE VOICE</p>
-              <h2>Choose how the speaker sounds.</h2>
-              <p>Changing this restarts only the Live connection. The wake phrase remains “Juniper.”</p>
+              <p className="eyebrow">VOICE &amp; WAKE NAME</p>
+              <h2>Choose how it sounds—and what gets its attention.</h2>
+              <p>Every request must start with the wake name. Saving reconnects only GPT Live; pairing and authorization stay intact.</p>
             </div>
             <div className="voice-picker">
               <label>
@@ -232,13 +249,36 @@ export function PairingApp() {
                   ))}
                 </select>
               </label>
+              <label>
+                <span>Wake name</span>
+                <input
+                  value={wakePhrase}
+                  onChange={(event) => setWakePhrase(event.target.value)}
+                  list="wake-name-presets"
+                  maxLength={40}
+                  autoComplete="off"
+                  placeholder="Juniper"
+                />
+                <datalist id="wake-name-presets">
+                  {CHATGPT_REALTIME_VOICES.map((entry) => (
+                    <option value={voiceLabel(entry)} key={entry} />
+                  ))}
+                </datalist>
+              </label>
               <button
                 className="primary-button"
                 type="button"
-                disabled={submitting || voice === session.voice || session.codexState === "working"}
-                onClick={() => void saveVoice()}
+                disabled={
+                  submitting
+                  || (
+                    voice === session.voice
+                    && normalizeWakeInput(wakePhrase) === (session.wakePhrase ?? "juniper")
+                  )
+                  || session.codexState === "working"
+                }
+                onClick={() => void saveSettings()}
               >
-                {submitting ? "Saving…" : "Save voice"}
+                {submitting ? "Saving…" : "Save voice & wake name"}
               </button>
               {session.codexState === "working" && (
                 <small>Wait for the active Codex task before restarting Live.</small>
@@ -276,6 +316,7 @@ export function PairingApp() {
                 <div><dt>Plan</dt><dd>{session.loginUser?.plan ?? "Account default"}</dd></div>
                 <div><dt>Model</dt><dd>{session.selectedModel ?? "Waiting for Live"}</dd></div>
                 <div><dt>Voice</dt><dd>{voiceLabel(session.voice ?? "vale")}</dd></div>
+                <div><dt>Wake name</dt><dd>{wakeLabel(session.wakePhrase ?? "juniper")}</dd></div>
                 <div>
                   <dt>Codex</dt>
                   <dd>
@@ -348,4 +389,17 @@ function isRealtimeVoice(value: unknown): value is ChatGPTRealtimeVoice {
 
 function voiceLabel(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function normalizeWakeInput(value: string): string | undefined {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, " ");
+  return normalized.length > 0
+    && normalized.length <= 40
+    && /^[a-z][a-z -]*$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function wakeLabel(value: string): string {
+  return value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }

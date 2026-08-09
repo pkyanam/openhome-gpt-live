@@ -111,7 +111,8 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
 .device-card, .authenticated-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .voice-settings-card { display: grid; grid-template-columns: 1fr minmax(250px, 0.75fr); gap: 1rem; align-items: end; }
 .voice-settings-card p:not(.eyebrow) { margin: 0.55rem 0 0; color: #adb3ad; line-height: 1.5; }
-.voice-picker { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; align-items: end; }
+.voice-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; align-items: end; }
+.voice-picker .primary-button { grid-column: 1 / -1; }
 .voice-picker small { grid-column: 1 / -1; color: #c5ad70; }
 .connection-pill { padding: 0.5rem 0.7rem; border: 1px solid #4a514b; border-radius: 999px; color: #aeb5af; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
 .connection-live, .connection-authenticated { border-color: #5faa79; color: #9ee9bb; background: rgba(71, 145, 98, 0.1); }

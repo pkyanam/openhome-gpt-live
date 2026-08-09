@@ -89,7 +89,7 @@ few seconds; it refreshes automatically. Tap **Open ChatGPT authorization** and
 enter the code shown there. Do not paste a bearer token or capture browser
 cookies.
 
-## Saying “Juniper” does nothing
+## Saying the wake name does nothing
 
 Check in order:
 
@@ -102,8 +102,10 @@ Check in order:
    Activity chat to install/start the persistent worker.
 7. `/setup` says the DevKit is live and ChatGPT is connected.
 
-Say the wake phrase as part of one request: “Juniper, explain photosynthesis,”
-not “Juniper” followed by a long pause.
+Confirm the wake name shown on `/setup`, then say it as part of one request:
+“Juniper, explain photosynthesis,” not “Juniper” followed by a long pause.
+Juniper is only the default; voice-name presets and custom English names can be
+selected on `/setup`.
 
 ## Web search says unavailable or starts Codex
 
@@ -125,24 +127,30 @@ status` work for the same host user, then inspect `data/server-error.log`.
 
 ## The date or time is stale
 
-The DevKit refreshes an authenticated host-clock context before every wake
-request, and the app-server answers clock reads from the host clock. Confirm the
-host's system time and timezone are correct. Clock questions use neither web
-search nor Codex.
+Version 0.3.1 and newer uses the app-server's live `currentTime/read` provider.
+It never injects a timestamp as a new realtime turn. Confirm the host's system
+time and timezone are correct. Clock questions use neither web search nor Codex.
 
-## Changing the voice has no effect
+If the speaker recites the date/time after an unrelated request, stop the
+DevKit worker, upgrade the host and Ability, Sync Abilities, then restart the
+Agent. Older per-wake timestamp injection could outrank the actual request.
 
-Use the picker on the paired `/setup` page. Saving closes the current Live
+## Changing the voice or wake name has no effect
+
+Use the controls on the paired `/setup` page. Saving closes the current Live
 session. The page should show `reconnecting` and return to `live` automatically,
-normally within a few seconds. Confirm the selected voice remains visible.
+normally within a few seconds. Confirm the selected voice and wake name remain
+visible.
 
 If it stays `closed`, the DevKit probably still has an Ability older than 0.2.1.
 In OpenHome, run **Sync Abilities**, then **Restart Agent** once. The optional
-`openhome_gpt_live_voice` Third Party Key is only an initial value; the paired
-browser selection is server-owned and is enforced on every Live negotiation.
+`openhome_gpt_live_voice` and `openhome_gpt_live_wake_phrase` Third Party Keys
+are only initial values; the paired browser selections are server-owned and
+enforced whenever the DevKit reconnects.
 
 The supported voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
-Spruce, and Vale. Voice and wake phrase are independent.
+Spruce, and Vale. Those names are also wake-name presets, or enter a custom
+1–40 character English name. Speaking voice and wake name are independent.
 
 ## It worked until a reboot
 
@@ -183,18 +191,23 @@ working default microphone/speaker. In the Ability editor, invoke the
 
 Custom ALSA device names bypass the default PipeWire echo-cancel path.
 
-## Juniper hears itself or interruption requires yelling
+## The speaker hears itself or interruption requires yelling
 
 The official DevKit path uses PipeWire's WebRTC acoustic echo canceller.
 Confirm the Ability uses `default` for capture and playback. Do not point
 capture directly at an exclusive hardware ALSA source unless diagnosing.
 
-Every interruption also requires “Juniper.” The worker cuts playback when its
-offline detector hears the phrase, then forwards the replacement request. Room
-acoustics, volume, and custom Raspberry Pi hardware can still affect double
-talk.
+Every interruption also requires the configured wake name. Version 0.3.1
+removes permissive phonetic aliases, requires a longer exact detector result,
+and does not reopen the ordinary wake gate until assistant playback has ended.
+The worker can still cut playback for a real wake-name barge-in. Room acoustics,
+volume, and custom Raspberry Pi hardware can affect double talk.
 
-## Both OpenHome and Juniper answer
+If the speaker starts a response without a person saying the wake name, treat
+it as a safety failure: stop the DevKit worker, then upgrade and Sync before
+restarting it.
+
+## Both OpenHome and GPT Live answer
 
 OpenHome's public Ability SDK does not expose a provider-registration hook.
 Enable the built-in Agent wake word and change it to a reserved recovery phrase,
