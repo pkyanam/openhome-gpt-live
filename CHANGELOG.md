@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.7 - 2026-08-09
+
+- Bind every physical wake event to one server-enforced routing transaction.
+  The first native, search, or Codex handoff owns that turn, and later
+  rephrased handoffs cannot escape into another lane.
+- Give Codex only the exact current delegated request. Prior assistant speech
+  is no longer injected as execution context or inferred as another action.
+- Stop exact repeated computer actions before a second execution and end a
+  media task as soon as its own tool result confirms playback is active.
+- Tighten media tasks to eight actionable items while preserving independent,
+  parallel Codex threads and leaving tool selection to each Codex agent.
+- Add end-to-end protocol, DevKit proxy, Ability, playback, and replay
+  regression coverage for the new wake transaction boundary.
+
 ## 0.3.6 - 2026-08-09
 
 - Give every handoff one exclusive owner: native GPT Live, authenticated OpenAI

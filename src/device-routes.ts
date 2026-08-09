@@ -537,6 +537,7 @@ function isAllowedDeviceRoute(path: string, method: string): boolean {
   if (path === "/realtime/app-server") return method === "POST";
   if (/^\/realtime\/app-server\/[^/]+\/events$/.test(path)) return method === "GET";
   if (/^\/realtime\/app-server\/[^/]+\/clock$/.test(path)) return method === "POST";
+  if (/^\/realtime\/app-server\/[^/]+\/turn$/.test(path)) return method === "POST";
   if (/^\/realtime\/app-server\/[^/]+$/.test(path)) return method === "DELETE";
   return false;
 }

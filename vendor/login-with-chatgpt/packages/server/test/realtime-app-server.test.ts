@@ -277,6 +277,46 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
   });
 
+  test("allows exactly one backend route for each physical wake transaction", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const searched: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: (transcript) => transcript.includes("news") ? "openai_search" : "codex",
+      executeSearch: async (transcript) => {
+        searched.push(transcript);
+        return "Current news result.";
+      },
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async () => {};
+    mockStartedSession(session, requests);
+
+    session.beginVoiceTurn("voice_turn_0001");
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play one song on YouTube." },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Search for that song in the news." },
+    });
+    await settle();
+
+    expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
+    expect(searched).toEqual([]);
+    expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
+
+    session.beginVoiceTurn("voice_turn_0002");
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Search the news for OpenHome." },
+    });
+    await settle();
+
+    expect(searched).toEqual(["Search the news for OpenHome."]);
+  });
+
   test("keeps OpenAI search available while a Codex task is running", async () => {
     const speech: string[] = [];
     const searched: string[] = [];
@@ -354,7 +394,8 @@ describe("ChatGPTRealtimeAppServerSession", () => {
       "task_thread_2",
     ]);
     expect(JSON.stringify(turnStarts[1]?.params)).toContain("Look up OpenHome.");
-    expect(JSON.stringify(turnStarts[1]?.params)).toContain("OpenHome makes an AI speaker.");
+    expect(JSON.stringify(turnStarts[1]?.params)).not.toContain("OpenHome makes an AI speaker.");
+    expect(JSON.stringify(turnStarts[1]?.params)).toContain("exact current user request");
     expect(events.some((event) => event.type === "handoff.deduplicated")).toBe(true);
     expect(speech.filter((text) => text === "I started that in a new Codex task.")).toHaveLength(2);
 
@@ -531,6 +572,81 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(wire.at(-1)?.["result"]).toEqual(expect.objectContaining({ success: true }));
   });
 
+  test("stops a media task as soon as its tool result confirms active playback", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play Midnight City on YouTube." },
+    });
+    await settle();
+    (session as any).handleNotification("item/completed", {
+      threadId: "task_thread_1",
+      turnId: "turn_task_thread_1",
+      item: {
+        type: "mcpToolCall",
+        server: "computer-use",
+        tool: "computer",
+        result: { content: [{ type: "text", text: "button Pause (k)" }] },
+      },
+    });
+    await settle();
+
+    expect((session as any).activeTasks.size).toBe(0);
+    expect(speech.at(-1)).toBe("Playback started.");
+    expect(requests).toContainEqual({
+      method: "turn/interrupt",
+      params: { threadId: "task_thread_1", turnId: "turn_task_thread_1" },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "handoff.completed",
+      status: "completed",
+      fallbackSpeech: false,
+    }));
+  });
+
+  test("interrupts an exact repeated computer action before a second execution", async () => {
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+    });
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play a song on YouTube." },
+    });
+    await settle();
+
+    const repeated = {
+      threadId: "task_thread_1",
+      turnId: "turn_task_thread_1",
+      item: {
+        type: "mcpToolCall",
+        server: "computer-use",
+        tool: "computer",
+        arguments: { action: "click", x: 400, y: 300 },
+      },
+    };
+    (session as any).handleNotification("item/started", repeated);
+    (session as any).handleNotification("item/started", repeated);
+    await settle();
+
+    expect((session as any).activeTasks.size).toBe(0);
+    expect(speech.at(-1)).toContain("repeat the same computer action");
+  });
+
   test("interrupts a media task that exceeds its hard deadline", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];
@@ -587,6 +703,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
           type: "mcpToolCall",
           server: "computer-use",
           tool: "computer",
+          arguments: { action: "click", x: index, y: index },
         },
       });
     }

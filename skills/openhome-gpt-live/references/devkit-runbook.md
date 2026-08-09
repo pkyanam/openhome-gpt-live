@@ -45,18 +45,20 @@ controlled positive wake test and one no-wake negative test pass.
 - Media playback and controls for YouTube, Spotify, and Apple Music: Codex's
   single-flight media lane.
 
-The configured wake phrase is stripped before routing. Every accepted handoff
-has one owner. Repeated native fallbacks are silent and must never race a search
-or Codex completion.
+The configured wake phrase is stripped before routing. Every physical wake has
+one server transaction, and its first accepted handoff has one owner. A later
+rephrased handoff in that wake turn must never race a search or Codex completion.
 
 Codex tasks run in isolated threads, up to four in parallel. GPT Live should
 acknowledge every handoff promptly and announce each completion. Search must
 remain available while Codex tasks run.
 
-Media playback is single-flight. It may reuse or open one browser tab and start
-one stream. Completion speech terminates the turn. Expect media tasks to stop at
-12 actions or 90 seconds, direct computer tasks at 20 actions or two minutes,
-and ordinary delegated tasks at five minutes.
+Media playback is single-flight. Codex receives the exact request and chooses
+its own tools. It may reuse or open one browser tab and start one stream. A
+verified playback result or completion speech terminates the turn, and an exact
+repeated action is blocked. Expect media tasks to stop at eight actions or 90
+seconds, direct computer tasks at 20 actions or two minutes, and ordinary
+delegated tasks at five minutes.
 
 ## Audio and wake checks
 

@@ -86,9 +86,10 @@ The host classifies every native handoff before Codex accepts it:
   the single-flight media lane before native or search fallback.
 
 The DevKit's server-owned wake phrase is removed before this classification.
-Each handoff receives exactly one lane owner. Repeated native fallback handoffs
-are suppressed without speech, preventing a native refusal from racing a search
-or Codex result.
+Each physical wake receives a unique server transaction id. The first handoff
+claims exactly one lane owner, and every later handoff in that same wake turn is
+suppressed even if GPT Live rephrases it or targets another lane. This prevents
+a completed Codex action from later racing a search or another delegated task.
 
 The bridge uses client-managed handoffs, so web search does not create a Codex
 turn. The search lane acknowledges immediately, runs independently, and sends
@@ -99,12 +100,13 @@ parallel, with a four-task safety limit. Handoffs are deduplicated, completion
 events are correlated by thread id, and each task gets a spoken fallback if its
 execution agent omits `speak_to_user`.
 
-Media playback is a single-flight sub-lane. The bridge rejects replayed media
-handoffs, tells Codex to reuse one relevant tab and start one stream, caps the
-turn at 12 actionable items or 90 seconds, and interrupts the execution turn as
-soon as `speak_to_user` reports completion. Other direct computer-control turns
-stop after 20 actions or two minutes; ordinary delegated work stops after five
-minutes.
+Media playback is a single-flight sub-lane. Codex receives the user's exact
+request and chooses its tools. The bridge rejects replayed handoffs and exact
+repeated actions, tells Codex to reuse one relevant tab and start one stream,
+caps the turn at eight actionable items or 90 seconds, and interrupts execution
+when `speak_to_user` reports completion or a tool result confirms active
+playback. Other direct computer-control turns stop after 20 actions or two
+minutes; ordinary delegated work stops after five minutes.
 
 OpenHome mutations use prepare/review/confirm. Workspace-only Codex uses
 `workspace-write`. Browser-confirmed host actions run outside the workspace only

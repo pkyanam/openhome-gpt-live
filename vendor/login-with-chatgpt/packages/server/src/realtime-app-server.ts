@@ -136,7 +136,6 @@ interface DelegatedTask {
   id: string;
   transcript: string;
   normalizedTranscript: string;
-  context?: string;
   kind: "general" | "computer" | "media";
   createdAt: number;
   threadId?: string;
@@ -144,6 +143,7 @@ interface DelegatedTask {
   spoke: boolean;
   completing: boolean;
   actionCount: number;
+  actionFingerprints: Set<string>;
   timeout?: ReturnType<typeof setTimeout>;
 }
 
@@ -161,7 +161,7 @@ const MEDIA_REPLAY_GUARD_MS = 5_000;
 const DEFAULT_TASK_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_COMPUTER_TASK_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_MEDIA_TASK_TIMEOUT_MS = 90_000;
-const MAX_MEDIA_TASK_ACTIONS = 12;
+const MAX_MEDIA_TASK_ACTIONS = 8;
 const MAX_COMPUTER_TASK_ACTIONS = 20;
 const DEFAULT_EXECUTION_INSTRUCTIONS =
   "You are the execution side of one native realtime voice assistant. Requests arrive inside " +
@@ -213,6 +213,8 @@ export class ChatGPTRealtimeAppServerSession {
   private activeSearches = new Map<string, SearchHandoff>();
   private lastNativeRedirectAt?: number;
   private lastMediaHandoffAt?: number;
+  private currentVoiceTurnId?: string;
+  private claimedVoiceTurnId?: string;
   private speechTail: Promise<void> = Promise.resolve();
 
   constructor(options: ChatGPTRealtimeAppServerOptions) {
@@ -322,6 +324,22 @@ export class ChatGPTRealtimeAppServerSession {
       await this.close().catch(() => {});
       throw error;
     }
+  }
+
+  /**
+   * Opens a server-enforced routing transaction for one physical wake event.
+   * The first backend handoff in the transaction owns it; later handoffs from
+   * the same native Live turn are ignored even when they are rephrased or
+   * target a different execution lane.
+   */
+  beginVoiceTurn(turnId: string): void {
+    const normalized = turnId.trim();
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(normalized)) {
+      throw new TypeError("Voice turn id must contain 8-128 URL-safe characters.");
+    }
+    if (normalized === this.currentVoiceTurnId) return;
+    this.currentVoiceTurnId = normalized;
+    this.claimedVoiceTurnId = undefined;
   }
 
   onEvent(listener: (event: RealtimeBridgeEvent) => void): () => void {
@@ -623,6 +641,8 @@ export class ChatGPTRealtimeAppServerSession {
       }
     } else if (method === "item/started") {
       this.handleItemStarted(params);
+    } else if (method === "item/completed") {
+      this.handleItemCompleted(params);
     } else if (method === "turn/completed") {
       void this.handleTurnCompleted(params).catch(() => this.emit({
         type: "error",
@@ -643,6 +663,14 @@ export class ChatGPTRealtimeAppServerSession {
         : "").trim();
     const transcript = stripWakeWord(rawTranscript, this.startOptions?.wakePhrase);
     if (!transcript) return;
+    if (
+      this.currentVoiceTurnId
+      && this.claimedVoiceTurnId === this.currentVoiceTurnId
+    ) {
+      this.emit({ type: "handoff.deduplicated", transcript });
+      return;
+    }
+    if (this.currentVoiceTurnId) this.claimedVoiceTurnId = this.currentVoiceTurnId;
     const normalizedTranscript = normalizeTranscript(transcript);
     const now = this.nowMs();
     for (const [key, seenAt] of this.recentHandoffs) {
@@ -734,12 +762,12 @@ export class ChatGPTRealtimeAppServerSession {
       id: crypto.randomUUID(),
       transcript,
       normalizedTranscript,
-      context: handoffContext(item),
       kind,
       createdAt: now,
       spoke: false,
       completing: false,
       actionCount: 0,
+      actionFingerprints: new Set(),
     };
     this.emit({ type: "handoff", transcript });
     this.activeTasks.set(task.id, task);
@@ -896,6 +924,15 @@ export class ChatGPTRealtimeAppServerSession {
     const task = this.taskForRequest(params);
     const item = asRecord(params["item"]);
     if (!task || task.completing || !isActionItem(item)) return;
+    const fingerprint = actionFingerprint(item);
+    if (fingerprint && task.actionFingerprints.has(fingerprint)) {
+      void this.stopTask(
+        task,
+        "I stopped that task before it could repeat the same computer action.",
+      );
+      return;
+    }
+    if (fingerprint) task.actionFingerprints.add(fingerprint);
     task.actionCount += 1;
     const limit = task.kind === "media"
       ? MAX_MEDIA_TASK_ACTIONS
@@ -908,6 +945,30 @@ export class ChatGPTRealtimeAppServerSession {
         "I stopped that computer task because it exceeded its safe interaction limit without finishing.",
       );
     }
+  }
+
+  private handleItemCompleted(params: JsonObject): void {
+    const task = this.taskForRequest(params);
+    const item = asRecord(params["item"]);
+    if (
+      !task
+      || task.completing
+      || task.kind !== "media"
+      || !isPlaybackStartRequest(task.transcript)
+      || !itemShowsActivePlayback(item)
+    ) return;
+    void this.completeTaskFromGuard(task, "Playback started.");
+  }
+
+  private async completeTaskFromGuard(task: DelegatedTask, speech: string): Promise<void> {
+    if (!this.activeTasks.has(task.id) || task.completing) return;
+    task.spoke = true;
+    task.completing = true;
+    const threadId = task.threadId;
+    const turnId = task.turnId;
+    this.finalizeTask(task, "completed", false);
+    if (threadId && turnId) void this.interruptTurn(threadId, turnId);
+    await this.speak(speech).catch(() => {});
   }
 
   private async stopTask(task: DelegatedTask, speech: string): Promise<void> {
@@ -1102,6 +1163,47 @@ function isActionItem(item: JsonObject | undefined): boolean {
     || item?.["type"] === "collabAgentToolCall";
 }
 
+function actionFingerprint(item: JsonObject | undefined): string | undefined {
+  if (!item || !isActionItem(item)) return undefined;
+  const type = typeof item["type"] === "string" ? item["type"] : "";
+  const server = typeof item["server"] === "string" ? item["server"] : "";
+  const tool = typeof item["tool"] === "string" ? item["tool"] : "";
+  const command = typeof item["command"] === "string" ? item["command"] : "";
+  const args = "arguments" in item ? stableJson(item["arguments"]) : "";
+  return `${type}\u0000${server}\u0000${tool}\u0000${command}\u0000${args}`;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableJson(record[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function isPlaybackStartRequest(value: string): boolean {
+  return /\b(play|stream|watch|listen|put on|resume)\b/i.test(value)
+    && !/\b(pause|stop|close|quit)\b/i.test(value);
+}
+
+function itemShowsActivePlayback(item: JsonObject | undefined): boolean {
+  if (!item) return false;
+  const result = item["type"] === "mcpToolCall"
+    ? item["result"]
+    : item["type"] === "commandExecution"
+      ? item["aggregatedOutput"]
+      : undefined;
+  const text = typeof result === "string" ? result : stableJson(result);
+  if (!text || text === "undefined") return false;
+  return /\bnow playing\b/i.test(text)
+    || /\bplayer state\b.{0,40}\bplaying\b/is.test(text)
+    || /\bplayback\b.{0,40}\b(?:started|playing|active)\b/is.test(text)
+    || /\bbutton\b.{0,80}\bpause(?:\s*\([^)]*\))?\b/is.test(text);
+}
+
 function stripWakeWord(value: string, wakePhrase = "juniper"): string {
   const phrase = wakePhrase.trim().split(/\s+/).map(escapeRegExp).join("\\s+");
   if (!phrase) return value.trim();
@@ -1121,30 +1223,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function handoffContext(item: JsonObject): string | undefined {
-  const entries = Array.isArray(item["active_transcript"])
-    ? item["active_transcript"]
-    : Array.isArray(item["activeTranscript"])
-      ? item["activeTranscript"]
-      : [];
-  for (let index = entries.length - 2; index >= 0; index -= 1) {
-    const entry = asRecord(entries[index]);
-    const role = entry?.["role"];
-    const text = entry?.["text"];
-    if (role !== "assistant" || typeof text !== "string") continue;
-    const cleaned = text.trim();
-    if (!cleaned || /started (?:that|a new) codex task|codex is (?:still )?working|queued this request/i.test(cleaned)) {
-      continue;
-    }
-    return cleaned.slice(0, 1_000);
-  }
-  return undefined;
-}
-
 function delegationPrompt(task: DelegatedTask): string {
-  const context = task.context
-    ? `\n  <immediate_context>${escapeXml(task.context)}</immediate_context>`
-    : "";
   const taskContract = task.kind === "media"
     ? "\nMedia playback contract:\n" +
       "- Reuse an existing relevant browser tab or window whenever possible. Open at most one new tab and one media stream.\n" +
@@ -1157,10 +1236,11 @@ function delegationPrompt(task: DelegatedTask): string {
         "- Use the shortest deterministic path and reuse existing windows or tabs.\n" +
         "- Do not explore unrelated UI, repeat a successful action, or keep clicking after the requested state is visible.\n" +
         "- Verify the final state once, call speak_to_user, and stop immediately."
-      : "\nDo not use computer control unless the request explicitly requires it. Finish the scoped task, call speak_to_user, and stop.";
+      : "\nChoose tools yourself. Use computer control only when the current request requires it. Finish the scoped task, call speak_to_user, and stop.";
   return (
-    `<realtime_delegation parallel="true" kind="${task.kind}">\n  <input>${escapeXml(task.transcript)}</input>${context}\n` +
+    `<realtime_delegation parallel="true" kind="${task.kind}">\n  <input>${escapeXml(task.transcript)}</input>\n` +
     "</realtime_delegation>\n" +
+    "The input above is the exact current user request. Do not infer a follow-up from earlier conversation. " +
     "This request has its own isolated Codex thread. Complete only this request. Other voice tasks may run " +
     "in parallel, so do not replay, merge, wait for, or report on them." +
     taskContract

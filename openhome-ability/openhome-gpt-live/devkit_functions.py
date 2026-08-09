@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from urllib.parse import urlparse
 
 import httpx
@@ -497,6 +498,27 @@ async def _run_live_session(client, config, model, stop_event):
     }
     data_channel_holder = {"channel": None}
     seen_data_event_types = set()
+    live_session_id = None
+    control_tasks = set()
+
+    def open_voice_turn():
+        if not live_session_id:
+            log.warning("Could not mark the GPT Live wake transaction before signaling completed")
+            return
+        task = asyncio.create_task(
+            _announce_voice_turn(client, config, live_session_id, uuid.uuid4().hex)
+        )
+        control_tasks.add(task)
+
+        def completed(done):
+            control_tasks.discard(done)
+            if done.cancelled():
+                return
+            error = done.exception()
+            if error is not None:
+                log.warning("Could not open the GPT Live wake transaction: %s", error)
+
+        task.add_done_callback(completed)
 
     class AlsaInputTrack(MediaStreamTrack):
         kind = "audio"
@@ -571,6 +593,7 @@ async def _run_live_session(client, config, model, stop_event):
                         )
                         data = bytes(AUDIO_BYTES)
                     elif wake_detected:
+                        open_voice_turn()
                         wake_state["active"] = True
                         wake_state["assistant_response_seen"] = False
                         wake_state["last_activity"] = now
@@ -652,6 +675,7 @@ async def _run_live_session(client, config, model, stop_event):
                             wake_word=wake_interrupt,
                         )
                         if wake_interrupt:
+                            open_voice_turn()
                             wake_state["last_activity"] = now
             frame = AudioFrame(format="s16", layout="mono", samples=AUDIO_SAMPLES)
             frame.planes[0].update(data)
@@ -829,7 +853,14 @@ async def _run_live_session(client, config, model, stop_event):
         if playback_error["value"] is not None:
             completed_error = playback_error["value"]
     finally:
-        for task in (bridge_task, max_timer, stop_task, close_task, *playback_tasks):
+        for task in (
+            bridge_task,
+            max_timer,
+            stop_task,
+            close_task,
+            *playback_tasks,
+            *control_tasks,
+        ):
             if task is not None:
                 task.cancel()
         input_track.stop()
@@ -954,6 +985,15 @@ async def _consume_bridge_events(client, config, live_session_id, closed_event):
             elif event_type == "session.closed":
                 closed_event.set()
                 return
+
+
+async def _announce_voice_turn(client, config, live_session_id, turn_id):
+    """Bind one physical wake event to exactly one backend routing lane."""
+    response = await client.post(
+        _device_path(config, f"/realtime/app-server/{live_session_id}/turn"),
+        json={"turnId": turn_id},
+    )
+    response.raise_for_status()
 
 
 def decode_realtime_event(message):

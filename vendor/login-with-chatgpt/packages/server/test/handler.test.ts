@@ -173,6 +173,7 @@ describe("createChatGPTHandler", () => {
     let confirmationContext: any;
     let closed = false;
     let clockRefreshes = 0;
+    const voiceTurns: string[] = [];
     const listeners = new Set<(event: any) => void>();
     const fakeSession = {
       id: "live_session_123",
@@ -199,6 +200,9 @@ describe("createChatGPTHandler", () => {
       },
       refreshClock: async () => {
         clockRefreshes += 1;
+      },
+      beginVoiceTurn: (turnId: string) => {
+        voiceTurns.push(turnId);
       },
       close: async () => {
         closed = true;
@@ -283,6 +287,18 @@ describe("createChatGPTHandler", () => {
     expect(refreshedClock.status).toBe(200);
     expect(await refreshedClock.json()).toEqual({ status: "refreshed" });
     expect(clockRefreshes).toBe(1);
+
+    const openedTurn = await handler.handler(new Request(
+      `${BASE}/realtime/app-server/live_session_123/turn`,
+      {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ turnId: "voice_turn_0001" }),
+      },
+    ));
+    expect(openedTurn.status).toBe(200);
+    expect(await openedTurn.json()).toEqual({ status: "opened", turnId: "voice_turn_0001" });
+    expect(voiceTurns).toEqual(["voice_turn_0001"]);
 
     await sessionOptions.executeTool({
       callId: "call_1",
