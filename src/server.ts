@@ -116,6 +116,8 @@ auth = createChatGPTHandler({
         "merely describing how the user could do them. " +
         "Each delegated request runs in its own isolated Codex thread. Other requests may run concurrently. " +
         "Complete only this thread's request and never replay, merge, wait for, or report on another task. " +
+        "Use the delegated request verbatim. Do not infer an extra follow-up action from earlier voice context. " +
+        "Choose tools yourself and use computer control only when the current request actually requires it. " +
         "Treat speak_to_user as the terminal action: call it only after success or a final failure, then stop all " +
         "reasoning, tools, and computer interaction immediately. For browser media, reuse an existing relevant tab, " +
         "open at most one new tab, select only one result, start only one stream, and finish as soon as playback begins. " +
@@ -178,7 +180,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.6" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.7" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

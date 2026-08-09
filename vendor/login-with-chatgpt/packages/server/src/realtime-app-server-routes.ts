@@ -54,6 +54,7 @@ export interface RealtimeAppServerSessionHandle {
     confirmation: unknown,
   ): Promise<unknown>;
   refreshClock?(): Promise<void>;
+  beginVoiceTurn?(turnId: string): void;
   close(): Promise<void>;
 }
 
@@ -463,11 +464,44 @@ export function createRealtimeAppServerRoutes(options: {
     }
   }
 
+  async function beginVoiceTurn(request: Request, liveSessionId: string): Promise<Response> {
+    const ownerSessionId = await options.readSessionId(request);
+    if (!ownerSessionId) return json({ error: "not_authenticated" }, { status: 401 });
+    const managed = getSession(liveSessionId, ownerSessionId);
+    if (!managed) return json({ error: "realtime_session_not_found" }, { status: 404 });
+    if (!managed.session.beginVoiceTurn) {
+      return json({ error: "realtime_voice_turn_not_supported" }, { status: 501 });
+    }
+    let payload: unknown;
+    try {
+      const text = await readTextBody(request, options.maxRequestBytes);
+      if (text === undefined) {
+        return json(
+          { error: "realtime_request_too_large", maxRequestBytes: options.maxRequestBytes },
+          { status: 413 },
+        );
+      }
+      payload = JSON.parse(text);
+    } catch {
+      return json({ error: "invalid_realtime_voice_turn" }, { status: 400 });
+    }
+    const turnId = isRecord(payload) ? payload["turnId"] : undefined;
+    if (typeof turnId !== "string") {
+      return json({ error: "invalid_realtime_voice_turn" }, { status: 400 });
+    }
+    try {
+      managed.session.beginVoiceTurn(turnId);
+      return json({ status: "opened", turnId });
+    } catch {
+      return json({ error: "invalid_realtime_voice_turn" }, { status: 400 });
+    }
+  }
+
   return {
     start,
     closeOwner: (ownerSessionId) => withOwnerLock(ownerSessionId, () => closeOwnerUnlocked(ownerSessionId)),
     methods(route) {
-      const match = /^\/realtime\/app-server\/([^/]+)(?:\/(events|confirm|clock))?$/.exec(route);
+      const match = /^\/realtime\/app-server\/([^/]+)(?:\/(events|confirm|clock|turn))?$/.exec(route);
       if (!match?.[1]) return undefined;
       let liveSessionId: string;
       try {
@@ -481,6 +515,8 @@ export function createRealtimeAppServerRoutes(options: {
           ? { POST: (request) => confirm(request, liveSessionId) }
           : match[2] === "clock"
             ? { POST: (request) => refreshClock(request, liveSessionId) }
+          : match[2] === "turn"
+            ? { POST: (request) => beginVoiceTurn(request, liveSessionId) }
           : { DELETE: (request) => close(request, liveSessionId) };
     },
   };

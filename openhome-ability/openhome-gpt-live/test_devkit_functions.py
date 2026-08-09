@@ -117,6 +117,32 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(saved["voice"], "vale")
         self.assertEqual(saved["wake_phrase"], "maple")
 
+    def test_announces_each_physical_wake_as_a_server_voice_transaction(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+        class Client:
+            def __init__(self):
+                self.calls = []
+
+            async def post(self, path, json):
+                self.calls.append((path, json))
+                return Response()
+
+        client = Client()
+        asyncio.run(live._announce_voice_turn(
+            client,
+            {"device_id": "dev_1"},
+            "live_1",
+            "voice_turn_0001",
+        ))
+
+        self.assertEqual(client.calls, [(
+            "/api/device/dev_1/chatgpt/realtime/app-server/live_1/turn",
+            {"turnId": "voice_turn_0001"},
+        )])
+
     def test_reconnects_in_process_and_applies_a_new_browser_voice(self):
         voices = []
         statuses = []

@@ -189,13 +189,15 @@ Search and Codex work run independently. Each Codex request starts immediately
 in its own isolated thread, up to four at once. GPT Live acknowledges each start
 and announces each result without blocking conversation or OpenAI web search.
 Browser media is intentionally single-flight: one request may reuse or open one
-tab and start one stream. Completion speech ends the task immediately. Media and
-computer-control work also has bounded action counts and hard deadlines so an
-agent cannot click indefinitely.
+tab and start one stream. Codex chooses the tools required by the user's exact
+request. The bridge ends the task when Codex reports completion or when its own
+tool result confirms playback, blocks an exact repeated action, and enforces
+bounded action counts and hard deadlines.
 
-Each handoff has one owner. A native answer cannot also become a search or Codex
-task, repeated fallback handoffs stay silent, and the configured wake name is
-removed before routing. Commands such as “play a song on YouTube,” “control
+Each physical wake opens one routing transaction. Its first handoff has one
+owner, so a Codex task cannot later become a search or another Codex task even
+if GPT Live rephrases it. Repeated fallback handoffs stay silent, and the
+configured wake name is removed before routing. Commands such as “play a song on YouTube,” “control
 Spotify,” or “pause Apple Music” always use the media lane rather than the web
 search fallback.
 

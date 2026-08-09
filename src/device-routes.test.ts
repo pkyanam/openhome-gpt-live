@@ -138,6 +138,22 @@ describe("headless DevKit routes", () => {
       session: { model: "gpt-live-test", voice: "vale", wakePhrase: "juniper" },
     });
 
+    const turnResponse = await route(jsonRequest(
+      `${deviceBase}/realtime/app-server/live-1/turn`,
+      {
+        method: "POST",
+        bearer: registration.deviceToken,
+        body: { turnId: "voice_turn_0001" },
+      },
+    ));
+    expect(turnResponse.status).toBe(200);
+    expect(await turnResponse.json()).toEqual({ status: "opened", turnId: "voice_turn_0001" });
+    const forwardedTurn = internalRequests.find((request) =>
+      request.method === "POST"
+      && new URL(request.url).pathname.endsWith("/realtime/app-server/live-1/turn")
+    );
+    expect(await forwardedTurn?.json()).toEqual({ turnId: "voice_turn_0001" });
+
     const eventsResponse = await route(new Request(`${deviceBase}/realtime/app-server/live-1/events`, {
       headers: { authorization: `Bearer ${registration.deviceToken}` },
     }));
@@ -237,6 +253,9 @@ function fakeAuth(
     if (path === "/models") return Response.json({ models: ["gpt-live-test"] });
     if (path === "/realtime/app-server" && request.method === "POST") {
       return Response.json({ sessionId: "live-1", sdp: "v=0\r\nanswer" }, { status: 201 });
+    }
+    if (path === "/realtime/app-server/live-1/turn" && request.method === "POST") {
+      return Response.json({ status: "opened", turnId: "voice_turn_0001" });
     }
     if (path === "/realtime/app-server/live-1/events") {
       const event = {

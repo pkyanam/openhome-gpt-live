@@ -1,6 +1,6 @@
 {
   "name": "openhome-gpt-live",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Install, configure, develop, and repair GPT Live on OpenHome speakers.",
   "author": {
     "name": "OpenHome GPT Live contributors"
