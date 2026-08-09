@@ -256,6 +256,49 @@ class DevKitProtocolTests(unittest.TestCase):
         downsampled.frombytes(live._downsample_48k_to_16k(source))
         self.assertEqual(downsampled.tolist(), [6, 15])
 
+    def test_juniper_wake_grammar_accepts_common_pronunciations(self):
+        aliases = live._wake_phrase_aliases("Juniper")
+        self.assertIn("juniper", aliases)
+        self.assertIn("june it for", aliases)
+        self.assertEqual(live._wake_phrase_aliases("Hey-Home"), ("hey home",))
+
+    def test_wake_grammar_requires_three_confident_frames(self):
+        aliases = live._wake_phrase_aliases("juniper")
+        frames = 0
+        for _ in range(live.WAKE_CONFIRM_FRAMES - 1):
+            frames, confirmed = live._advance_wake_confirmation(
+                frames, "june a per", 0.85, aliases
+            )
+            self.assertFalse(confirmed)
+
+        frames, confirmed = live._advance_wake_confirmation(
+            frames, "june a per", 0.85, aliases
+        )
+        self.assertTrue(confirmed)
+        self.assertEqual(frames, 0)
+
+        frames, confirmed = live._advance_wake_confirmation(
+            2, "june a per", 0.79, aliases
+        )
+        self.assertFalse(confirmed)
+        self.assertEqual(frames, 0)
+
+    def test_wake_decoder_segments_long_silence(self):
+        quiet = array.array("h", [2] * live.AUDIO_SAMPLES).tobytes()
+        frames = 0
+        for _ in range(live.WAKE_SILENCE_FRAMES - 1):
+            frames, should_reset = live._advance_wake_silence(frames, quiet)
+            self.assertFalse(should_reset)
+
+        frames, should_reset = live._advance_wake_silence(frames, quiet)
+        self.assertTrue(should_reset)
+        self.assertEqual(frames, 0)
+
+        speech = array.array("h", [200] * live.AUDIO_SAMPLES).tobytes()
+        frames, should_reset = live._advance_wake_silence(12, speech)
+        self.assertFalse(should_reset)
+        self.assertEqual(frames, 0)
+
     def test_refreshes_clock_through_authenticated_live_session(self):
         class Response:
             def raise_for_status(self):
@@ -282,9 +325,9 @@ class DevKitProtocolTests(unittest.TestCase):
             {},
         )])
 
-    def test_returns_to_armed_mode_only_after_listening_timeout(self):
+    def test_returns_to_armed_mode_after_timeout_even_without_wm_state_events(self):
         wake = {"active": True, "last_activity": 100.0, "idle_seconds": 30}
-        self.assertFalse(
+        self.assertTrue(
             live._should_return_to_wake_mode(wake, {"value": "speaking"}, now=200.0)
         )
         self.assertFalse(
@@ -296,6 +339,17 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertTrue(
             live._should_return_to_wake_mode(wake, {"value": "connected"}, now=130.0)
         )
+
+    def test_response_audio_rearms_only_after_user_speech_ends(self):
+        wake = {
+            "active": True,
+            "assistant_response_seen": True,
+            "last_user_speech": 100.0,
+        }
+        self.assertFalse(live._should_arm_after_response_audio(wake, now=100.79))
+        self.assertTrue(live._should_arm_after_response_audio(wake, now=100.81))
+        wake["assistant_response_seen"] = False
+        self.assertFalse(live._should_arm_after_response_audio(wake, now=120.0))
 
     def test_rearming_closes_mic_and_clears_stale_wake_audio(self):
         class Detector:
@@ -398,12 +452,10 @@ class DevKitProtocolTests(unittest.TestCase):
             wake_word=True,
         )
 
-        self.assertEqual(len(channel.messages), 1)
-        self.assertEqual(
-            live.decode_realtime_event(channel.messages[0]),
-            {"type": "action_request", "payload": {"action": "stop_speaking"}},
-        )
-        self.assertEqual(playback, {"cutoff": True, "barge_in": True})
+        self.assertEqual(channel.messages, [])
+        self.assertTrue(playback["cutoff"])
+        self.assertTrue(playback["cutoff_until"] > live.time.monotonic())
+        self.assertTrue(playback["barge_in"])
 
     def test_quiet_audio_does_not_interrupt(self):
         class Channel:
@@ -486,7 +538,7 @@ class DevKitProtocolTests(unittest.TestCase):
             playback,
             wake_word=True,
         )
-        self.assertEqual(len(channel.messages), 1)
+        self.assertEqual(channel.messages, [])
         self.assertTrue(playback["cutoff"])
 
     def test_new_wake_does_not_cancel_next_turn_during_old_playback_tail(self):
@@ -517,6 +569,25 @@ class DevKitProtocolTests(unittest.TestCase):
 
         self.assertEqual(channel.messages, [])
         self.assertFalse(playback["cutoff"])
+
+    def test_local_playback_energy_marks_output_as_speaking_without_wm_events(self):
+        now = live.time.monotonic()
+        playback = {
+            "started_at": now - live.WAKE_INTERRUPT_GUARD_SECONDS,
+            "playing_until": now + 0.2,
+        }
+        self.assertTrue(live._output_is_playing(
+            {"value": "connecting"}, playback, now
+        ))
+        self.assertFalse(live._output_is_playing(
+            {"value": "connecting"}, playback, now + 0.3
+        ))
+
+    def test_pcm_rms_detects_audible_playback(self):
+        quiet = array.array("h", [2] * live.AUDIO_SAMPLES).tobytes()
+        speech = array.array("h", [200] * live.AUDIO_SAMPLES).tobytes()
+        self.assertLess(live._pcm_rms(quiet), live.PLAYBACK_AUDIBLE_RMS)
+        self.assertGreater(live._pcm_rms(speech), live.PLAYBACK_AUDIBLE_RMS)
 
 
 if __name__ == "__main__":

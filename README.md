@@ -86,6 +86,9 @@ steps:
    enable its wake word and change it to a reserved recovery phrase such as
    `openhome fallback seven nine`.
 8. Tap **Sync Abilities**, then **Restart Agent**.
+9. In the dashboard's **Activity** chat, send `gpt live diagnostics` once. On
+   firmware 1.0.8 this bootstraps and starts the persistent GPT Live worker;
+   normal voice use never needs this phrase.
 
 ## Pair without relying on speaker audio
 
@@ -180,8 +183,18 @@ bun run service:status
 curl http://127.0.0.1:3000/healthz
 ```
 
-To update, rerun the one-line installer. If the Ability changed, tap **Sync
-Abilities** and **Restart Agent** afterward.
+To update, rerun the one-line installer. On firmware 1.0.8, prepare the DevKit's
+cached Ability before syncing a code update:
+
+```bash
+cd ~/.openhome-gpt-live
+bun run ability:prepare-sync
+```
+
+Reconnect the DevKit in OpenHome, tap **Sync Abilities**, then **Restart
+Agent**. The preparation command stops GPT Live and renames only its cached
+device folder to a timestamped backup; it never deletes the cloud Ability,
+pairing, or host state.
 
 - [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
 - [Manual installation and upgrades](docs/MANUAL-INSTALL.md)
@@ -259,12 +272,16 @@ Execution:
    every failure.
 5. If OPENHOME_API_KEY is configured, run `bun run upload:ability` to create or
    upgrade OpenHome GPT Live in place. Otherwise point me to
-   `dist/openhome-gpt-live-ability.zip`. Never delete a working Ability merely
-   to upgrade it.
+   `dist/openhome-gpt-live-ability.zip` for a new Ability or
+   `dist/openhome-gpt-live-release.zip` in an existing Ability's release
+   editor. Never delete a working cloud Ability merely to upgrade it. On
+   firmware 1.0.8 upgrades, run `bun run ability:prepare-sync` before the
+   dashboard Sync so stale device files cannot survive the update.
 6. Run `bun run openhome:config` and give me one short numbered list for the
    human-only OpenHome steps: create/link the two exact Third Party Keys,
    install/enable the Local Ability, move the built-in assistant to a reserved
-   recovery wake phrase, Sync Abilities, and Restart Agent. Wait for me.
+   recovery wake phrase, Sync Abilities, Restart Agent, then send `gpt live
+   diagnostics` once in Activity to bootstrap firmware 1.0.8. Wait for me.
 7. Run `bun run pairing:code -- --wait=180`. Give me the one-click setup link
    and pairing code without exposing any other state. If no code appears,
    diagnose Ability installation/configuration instead of asking me to inspect
@@ -283,7 +300,8 @@ Execution:
     - “Juniper, create a small test file in my workspace and tell me when it is
       done.” Confirm the immediate Codex acknowledgement and final spoken result.
 11. If source changes, rerun `bun run check`, upgrade the existing Ability in
-    place, then ask me only for Sync Abilities and Restart Agent.
+    place, prepare the firmware-1.0.8 cache when applicable, then ask me only
+    for reconnect, Sync Abilities, and Restart Agent.
 
 Finish with the installed commit/version, service and public-health status,
 Ability ZIP checksum, selected voice, access mode, workspace, and the three

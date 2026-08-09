@@ -36,10 +36,12 @@ a per-user service so it returns after a power cycle.
 
 PocketSphinx detects the configured wake phrase locally. While armed, the
 WebRTC microphone track contains silence. After “Juniper,” the worker forwards
-real microphone frames until the assistant turn completes, then re-arms. Every
-new request and mid-answer interruption requires the wake phrase. Re-arming
-changes only this local microphone gate: the WebRTC connection and GPT Live
-conversation remain open, preserving context across wake-word-gated follow-ups.
+real microphone frames until remote answer audio begins after the near-end
+request falls silent, then re-arms. A timeout closes failed turns even when
+`/wm` emits no state event. Every new request and mid-answer interruption
+requires the wake phrase. Re-arming changes only this local microphone gate:
+the WebRTC connection and GPT Live conversation remain open, preserving context
+across wake-word-gated follow-ups.
 
 The official DevKit path creates a PipeWire-Pulse `module-echo-cancel`
 source/sink. The cleaned capture channel goes to GPT Live and remote audio plays

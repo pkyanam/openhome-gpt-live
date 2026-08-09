@@ -21,8 +21,9 @@ bun run upload:ability
 
 That command creates **OpenHome GPT Live** when absent and upgrades the same
 Ability object when present, preserving its id and linked Third Party Keys.
-Without an API key, upload `dist/openhome-gpt-live-ability.zip` as a Local
-Ability in the OpenHome dashboard.
+Without an API key, upload `dist/openhome-gpt-live-ability.zip` as a new Local
+Ability in the OpenHome dashboard. That archive intentionally has one
+top-level directory.
 
 Print the exact Third Party Keys with:
 
@@ -31,7 +32,11 @@ bun run openhome:config
 ```
 
 Link both keys, install and enable the Ability on the active Agent, tap **Sync
-Abilities**, and choose **Restart Agent**.
+Abilities**, and choose **Restart Agent**. Then send `gpt live diagnostics`
+once in the dashboard's **Activity** chat. Firmware 1.0.8 does not reliably
+invoke a Local Ability background provider on Agent restart; this one-time
+diagnostic call installs and starts the persistent systemd worker. It is not a
+normal conversation launch phrase.
 
 ## Retrieve the pairing code
 
@@ -62,12 +67,25 @@ bun run service:install
 bun run upload:ability   # when OPENHOME_API_KEY is configured
 ```
 
-Without an OpenHome API key, upload the rebuilt ZIP in the existing Ability
-editor and save. Do not delete a working Ability to upgrade it; an installed
-record can otherwise point to the removed object.
+Without an OpenHome API key, upload `dist/openhome-gpt-live-release.zip` in the
+existing Ability's release editor and save. OpenHome's update endpoint expects
+the files at the ZIP root, unlike its new-Ability upload. Do not delete a
+working Ability to upgrade it; an installed record can otherwise point to the
+removed object.
 
-After an Ability upgrade, tap **Sync Abilities** and **Restart Agent**. Host-only
-documentation or UI changes do not require a speaker sync.
+Firmware 1.0.8 may retain the old local directory even after the cloud release
+is updated. Before dashboard Sync, run:
+
+```bash
+bun run ability:prepare-sync
+```
+
+This stops GPT Live and renames only its cached DevKit Ability folder to a
+timestamped backup. Reconnect the DevKit in the dashboard afterward.
+
+After an Ability upgrade, tap **Sync Abilities** and **Restart Agent**. If the
+worker service is absent or inactive, send `gpt live diagnostics` once in
+Activity. Host-only documentation or UI changes do not require a speaker sync.
 
 ## Change configuration
 

@@ -95,7 +95,7 @@ class FakeCapabilityWorker:
 
 class BackgroundProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_auto_starts_announces_pairing_and_cleans_up(self):
-        capability = background.OpenHomeGPTLiveBackgroundCapability()
+        capability = background.OpenhomeGptLiveCapabilityBackground()
         capability.worker = FakeWorker()
         capability.capability_worker = FakeCapabilityWorker()
 
@@ -108,6 +108,13 @@ class BackgroundProviderTests(unittest.IsolatedAsyncioTestCase):
         configure_args = capability.capability_worker.calls[1][1]
         self.assertEqual(configure_args[3], "vale")
         self.assertEqual(configure_args[-2:], ["juniper", "30"])
+
+    def test_background_class_uses_openhome_loader_suffix(self):
+        self.assertTrue(
+            background.OpenhomeGptLiveCapabilityBackground.__name__.endswith(
+                "CapabilityBackground"
+            )
+        )
 
 
 if __name__ == "__main__":
