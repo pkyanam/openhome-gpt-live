@@ -124,6 +124,18 @@ After upgrading, update the same Ability object in place, tap **Sync Abilities**
 and **Restart Agent**. On `/setup`, a successful request should show **Last
 routed request: OpenAI web search** while Codex remains idle.
 
+## The first wake request is silent but repeating it works
+
+Upgrade the Ability to **0.3.8 or newer**. Older builds replayed 500 ms of wake
+audio after opening the gate. During that replay the worker was not reading new
+capture frames, which could fill the DevKit audio pipe and discard the prompt
+spoken immediately after a short wake name such as Lara. The already-open
+second attempt then appeared reliable.
+
+Version 0.3.8 retains only an 80 ms tail. Say the wake name and prompt naturally
+as one utterance. A healthy worker log reports that the gate forwarded no more
+than 80 ms of buffered audio; it never logs microphone content.
+
 ## The first request works, then later wake requests receive no answer
 
 Upgrade the host and Ability to **0.3.2 or newer**. Some `/wm` calls remain

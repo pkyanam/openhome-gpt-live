@@ -56,7 +56,11 @@ SUPPORTED_VOICES = {
 DEFAULT_ACTIVE_IDLE_SECONDS = 30
 RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
-WAKE_PREROLL_FRAMES = 25
+# Keep only the tiny tail needed to preserve the first syllable after a short
+# wake name. A 500 ms replay stopped reading fresh capture long enough to fill
+# the parec pipe and drop the user's immediately following prompt, making the
+# already-open second attempt appear more reliable than the first.
+WAKE_PREROLL_FRAMES = 4
 WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
 WAKE_CONFIRM_FRAMES = 3
 WAKE_CONFIRM_WINDOW_SECONDS = 0.8
@@ -602,6 +606,10 @@ async def _run_live_session(client, config, model, stop_event):
                         wake_state["response_latency_logged"] = False
                         self._pending.extend(self._preroll)
                         self._preroll.clear()
+                        log.info(
+                            "GPT Live wake gate is forwarding %d ms of buffered audio",
+                            len(self._pending) * AUDIO_SAMPLES * 1000 // AUDIO_RATE,
+                        )
                         data = self._pending.popleft()
                         log.info("GPT Live wake phrase detected: %s", wake_state["phrase"])
                         _maybe_interrupt(

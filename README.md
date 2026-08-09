@@ -210,6 +210,10 @@ default. Saving either setting reconnects GPT Live automatically while keeping
 the device pairing and ChatGPT authorization. The new wake name is then
 required before every request and interruption.
 
+The offline gate retains only an 80 ms audio tail, so a natural “Lara, prompt”
+utterance reaches GPT Live on its first attempt without transmitting room audio
+while the speaker is armed.
+
 For unattended initial setup, pass `--wake-name NAME`. After pairing, the
 server-owned `/setup` selection takes precedence and survives Ability syncs and
 Agent restarts.

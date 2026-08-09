@@ -91,6 +91,11 @@ claims exactly one lane owner, and every later handoff in that same wake turn is
 suppressed even if GPT Live rephrases it or targets another lane. This prevents
 a completed Codex action from later racing a search or another delegated task.
 
+The offline wake gate retains an 80 ms PCM tail when it opens. This is long
+enough to preserve the start of a no-pause prompt, but short enough that replay
+cannot fill the DevKit capture pipe while fresh speech arrives. Armed room audio
+is still replaced with silence and never leaves the speaker.
+
 The bridge uses client-managed handoffs, so web search does not create a Codex
 turn. The search lane acknowledges immediately, runs independently, and sends
 its speech-friendly result through `thread/realtime/appendSpeech`.
