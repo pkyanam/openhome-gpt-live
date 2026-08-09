@@ -21,6 +21,17 @@ import devkit_functions as live
 
 
 class DevKitProtocolTests(unittest.TestCase):
+    def test_wake_preroll_cannot_starve_the_following_prompt(self):
+        replay_seconds = (
+            live.WAKE_PREROLL_FRAMES * live.AUDIO_SAMPLES / live.AUDIO_RATE
+        )
+        capture_bytes = (
+            live.WAKE_PREROLL_FRAMES * live.AUDIO_BYTES * live.AEC_CHANNELS
+        )
+
+        self.assertLessEqual(replay_seconds, 0.1)
+        self.assertLess(capture_bytes, 64 * 1024)
+
     def test_decodes_direct_and_nested_realtime_events(self):
         event = {"type": "state_update", "payload": {"new_state": "speaking"}}
         nested = json.dumps({"type": "data_message", "data": json.dumps(event)})

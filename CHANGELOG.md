@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.8 - 2026-08-09
+
+- Fix the silent first request when a user says the wake name and prompt as one
+  natural utterance.
+- Reduce wake audio replay from 500 ms to an 80 ms tail. This preserves the
+  beginning of an immediate prompt without pausing capture long enough to fill
+  the DevKit audio pipe and discard fresh speech.
+- Add bounded-preroll regression coverage and safe wake-buffer telemetry that
+  records duration only, never microphone content or transcripts.
+
 ## 0.3.7 - 2026-08-09
 
 - Bind every physical wake event to one server-enforced routing transaction.

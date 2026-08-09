@@ -63,6 +63,8 @@ delegated tasks at five minutes.
 ## Audio and wake checks
 
 - Require the configured wake name for every new request, including barge-in.
+- A wake name and prompt spoken as one utterance must work on the first attempt.
+  The worker should report no more than 80 ms of buffered wake audio.
 - While GPT Live runs, verify the firmware Chromium capture and playback
   streams are muted; the Ability watchdog must reapply this after restarts.
 - Keep the same Live session so context survives between gated turns.
