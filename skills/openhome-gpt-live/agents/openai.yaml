@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenHome GPT Live"
+  short_description: "Install, configure, and repair GPT Live speakers"
+  default_prompt: "Use $openhome-gpt-live to install or diagnose my OpenHome GPT Live speaker."

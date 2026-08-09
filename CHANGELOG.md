@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0 - 2026-08-08
+
+- Replace fragmented onboarding with an idempotent interactive installer,
+  explicit flags and help, resumable `bun run finish` handoff, and safe
+  preservation of local configuration and cloud Ability identity.
+- Add existing-HTTPS, persistent named Cloudflare Tunnel, temporary Quick
+  Tunnel, and configure-later modes. The named tunnel path installs a user
+  launchd/systemd service without replacing global Cloudflare configuration.
+- Make Codex, OpenHome API automation, managed tunneling, and local Python
+  packaging optional when their capabilities are not needed.
+- Add a Codex-compatible repository plugin and concise OpenHome GPT Live skill
+  with reusable preflight, status, setup-mode, and DevKit recovery resources.
+- Replace the long agent prompt with a two-line skill handoff beside the
+  one-command installer.
+- Add a responsive, interactive GitHub Pages marketing and documentation site
+  using reference-faithful OpenHome DevKit artwork, plus automated Pages
+  deployment and CI validation.
+
 ## 0.2.7 - 2026-08-08
 
 - Prevent GPT Live's own spoken response from being accepted as a new Juniper

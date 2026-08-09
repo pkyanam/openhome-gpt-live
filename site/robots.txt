@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://pkyanam.github.io/openhome-gpt-live/sitemap.xml

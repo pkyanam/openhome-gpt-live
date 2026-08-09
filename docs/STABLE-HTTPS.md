@@ -6,25 +6,39 @@ another computer, a phone, or a tablet; `/setup` is not embedded in the
 OpenHome mobile app. The bridge itself should keep listening only on
 `127.0.0.1:3000`; a tunnel or reverse proxy supplies HTTPS.
 
-## Recommended: Cloudflare Tunnel
+## Recommended: persistent Cloudflare Tunnel
 
-This path requires a domain managed in Cloudflare.
+This path requires a domain managed in Cloudflare and the `cloudflared` CLI.
+The setup wizard can create or reuse a named, account-linked tunnel, route the
+hostname, validate ingress, and install a user launchd/systemd service:
 
-1. In the Cloudflare dashboard, open **Zero Trust → Networks → Tunnels**.
-2. Create a Cloudflared tunnel named `openhome-gpt-live`.
-3. Add a public hostname such as `voice.example.com`.
-4. Set its service type to **HTTP** and its URL to
-   `http://127.0.0.1:3000`.
-5. On the computer running this project, follow Cloudflare's displayed connector
-   command and enable it at startup.
-6. Wait until the tunnel is Healthy, then verify:
+```bash
+./install.sh --tunnel cloudflare --hostname voice.example.com
+```
 
-   ```bash
-   curl https://voice.example.com/healthz
-   ```
+Or configure it from an existing checkout:
 
-7. Give `https://voice.example.com`—with no trailing path—to the installer as
-   `PUBLIC_BASE_URL`.
+```bash
+bun run setup -- --tunnel cloudflare --hostname voice.example.com
+bun run tunnel -- status
+```
+
+On the first run, `cloudflared tunnel login` opens a browser so the owner can
+authorize the account and choose the managed domain. The repository keeps its
+own config under ignored `data/` state and does not replace the user's global
+Cloudflare configuration. The named tunnel and DNS route are reused on later
+runs.
+
+Wait until the tunnel is active, then verify:
+
+```bash
+curl https://voice.example.com/healthz
+```
+
+`bun run tunnel -- uninstall` stops only the repository-managed user service;
+it intentionally preserves the Cloudflare tunnel and DNS record. Cloudflare's
+[locally managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/create-local-tunnel/)
+documents the underlying authorization, tunnel, DNS, and configuration model.
 
 The hostname should return `{"status":"ok",...}` before you configure the
 OpenHome Third Party Key.
@@ -44,12 +58,13 @@ loopback and let the TLS endpoint be the only public listener.
 
 ## Temporary evaluation only
 
-If `cloudflared` is installed, this creates a random test URL:
+Choose **Quick Tunnel** in the wizard or run:
 
 ```bash
-cloudflared tunnel --url http://127.0.0.1:3000
+bun run setup -- --tunnel quick
 ```
 
-The generated `trycloudflare.com` URL changes when the process restarts. When it
-changes, the Ability keeps calling the old address and the speaker appears
-dead. Use this only to evaluate the integration, not for an always-on speaker.
+The helper starts it in the background for the current evaluation and captures
+the URL. The generated `trycloudflare.com` URL changes when the process
+restarts. When it changes, the Ability keeps calling the old address and the
+speaker appears dead. Never treat this as an always-on production path.

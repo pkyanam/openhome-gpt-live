@@ -1,0 +1,18 @@
+{
+  "name": "openhome-gpt-live",
+  "version": "0.3.0",
+  "description": "Install, configure, develop, and repair GPT Live on OpenHome speakers.",
+  "author": {
+    "name": "OpenHome GPT Live contributors"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OpenHome GPT Live",
+    "shortDescription": "Build and operate GPT Live OpenHome speakers.",
+    "longDescription": "A guarded runbook and deterministic helpers for installing, configuring, updating, testing, and diagnosing OpenHome GPT Live speakers.",
+    "developerName": "OpenHome GPT Live contributors",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "defaultPrompt": "Use the OpenHome GPT Live skill to set up or repair my speaker."
+  }
+}

@@ -8,6 +8,7 @@ Use this when you do not want the one-line installer.
 git clone https://github.com/pkyanam/openhome-gpt-live.git
 cd openhome-gpt-live
 bun install --frozen-lockfile
+bun run setup -- --help
 bun run setup
 bun run check
 bun run service:install
@@ -25,23 +26,23 @@ Without an API key, upload `dist/openhome-gpt-live-ability.zip` as a new Local
 Ability in the OpenHome dashboard. That archive intentionally has one
 top-level directory.
 
-Print the exact Third Party Keys with:
+Start the guided OpenHome and pairing handoff with:
 
 ```bash
-bun run openhome:config
+bun run finish
 ```
 
-Link both keys, install and enable the Ability on the active Agent, tap **Sync
-Abilities**, and choose **Restart Agent**. Then send `gpt live diagnostics`
-once in the dashboard's **Activity** chat. Firmware 1.0.8 does not reliably
-invoke a Local Ability background provider on Agent restart; this one-time
-diagnostic call installs and starts the persistent systemd worker. It is not a
-normal conversation launch phrase.
+It prints both exact keys, then waits while you link them, install and enable
+the Ability, tap **Sync Abilities**, restart the Agent, and send `gpt live
+diagnostics` once in Activity. Firmware 1.0.8 does not reliably invoke a Local
+Ability background provider on Agent restart; this one-time diagnostic call
+installs and starts the persistent systemd worker. It is not a normal
+conversation launch phrase.
 
 ## Retrieve the pairing code
 
-You do not need working speaker audio or DevKit log access. After the Agent
-restarts, run:
+You do not need working speaker audio or DevKit log access. If you left the
+guided command, retrieve the code directly with:
 
 ```bash
 bun run pairing:code -- --wait=180
@@ -115,16 +116,21 @@ worker.
 
 ## Non-interactive installation
 
-Automation may pre-set values from `.env.example`:
+Automation can use the same installer flags:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/install.sh | \
-env OPENHOME_GPT_LIVE_NONINTERACTIVE=1 \
-    APP_ALLOWED_CHATGPT_EMAIL=user@example.com \
-    PUBLIC_BASE_URL=https://voice.example.com \
-    CODEX_WORKSPACE=/srv/juniper-workspace \
-    bash
+  bash -s -- \
+    --non-interactive \
+    --tunnel existing \
+    --public-url https://voice.example.com \
+    --email user@example.com \
+    --workspace /srv/juniper-workspace \
+    --access workspace \
+    --skip-finish
 ```
 
 If `CODEX_MAC_CONTROL=full`, also set
 `OPENHOME_GPT_LIVE_ACCEPT_FULL_ACCESS=1`. Missing private secrets are generated.
+Run `./install.sh --help`, `bun run setup -- --help`, and `bun run tunnel --
+--help` for the current mode and flag list.

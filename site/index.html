@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenHome GPT Live — Voice, search, and Codex in the room</title>
+  <meta name="description" content="A self-hosted GPT Live voice and Codex tool plane for OpenHome speakers. Wake-word gated, subscription-backed, and built for real rooms.">
+  <meta name="theme-color" content="#071116">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="OpenHome × GPT Live">
+  <meta property="og:description" content="Wake-word voice. OpenAI search. Codex tools.">
+  <meta property="og:url" content="https://pkyanam.github.io/openhome-gpt-live/">
+  <meta property="og:image" content="https://pkyanam.github.io/openhome-gpt-live/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://pkyanam.github.io/openhome-gpt-live/og.png">
+  <link rel="canonical" href="https://pkyanam.github.io/openhome-gpt-live/">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"OpenHome GPT Live","codeRepository":"https://github.com/pkyanam/openhome-gpt-live","license":"https://opensource.org/license/mit","runtimePlatform":["macOS","Linux","OpenHome DevKit"],"description":"A self-hosted GPT Live voice and Codex tool plane for OpenHome speakers."}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="noise" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="OpenHome GPT Live home">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>OpenHome <b>× GPT Live</b></span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#setup">Setup</a>
+      <a href="#architecture">How it works</a>
+      <a href="#voices">Voices</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="nav-cta" href="https://github.com/pkyanam/openhome-gpt-live">View on GitHub <span>↗</span></a>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span class="live-dot"></span> Self-hosted · open source · room tested</p>
+        <h1>A real voice agent,<br><em>in the room.</em></h1>
+        <p class="hero-lede">Bring GPT Live conversation, OpenAI web search, and optional Codex tools to an OpenHome speaker—without an API key, browser cookie capture, or a screen on the DevKit.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#setup">Set up your speaker <span>↓</span></a>
+          <a class="button quiet" href="https://github.com/pkyanam/openhome-gpt-live#how-it-works">Read the source <span>↗</span></a>
+        </div>
+        <div class="quick-command" data-copy-group>
+          <div class="terminal-head"><span></span><span></span><span></span><b>one command</b></div>
+          <code>curl -fsSL https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/install.sh | bash</code>
+          <button class="copy-button" type="button" data-copy aria-label="Copy install command">Copy</button>
+        </div>
+        <ul class="hero-proof" aria-label="Compatibility">
+          <li><b>1.0.8</b><span>firmware tested</span></li>
+          <li><b>9</b><span>speaking voices</span></li>
+          <li><b>0</b><span>OpenAI API keys</span></li>
+        </ul>
+      </div>
+
+      <div class="hero-stage reveal" aria-label="Stylized OpenHome voice session">
+        <img class="devkit-photo" src="./devkit-hero.png" alt="OpenHome DevKit with a white cube speaker enclosure, exposed front driver, and electronics boards mounted on top">
+        <div class="ambient-ring ring-one"></div>
+        <div class="ambient-ring ring-two"></div>
+        <div class="wave" aria-hidden="true">
+          <i style="--h:22%"></i><i style="--h:48%"></i><i style="--h:72%"></i><i style="--h:36%"></i><i style="--h:88%"></i><i style="--h:55%"></i><i style="--h:28%"></i><i style="--h:64%"></i><i style="--h:40%"></i><i style="--h:74%"></i><i style="--h:32%"></i>
+        </div>
+        <div class="speech-card user-card">
+          <span class="card-label">YOU</span>
+          <p>“Juniper, search today’s OpenHome news.”</p>
+        </div>
+        <div class="speech-card agent-card">
+          <span class="card-label">GPT LIVE · OPENAI SEARCH</span>
+          <p>“Here’s what changed today…”</p>
+        </div>
+        <div class="wake-chip"><span></span> Wake gate armed</div>
+      </div>
+    </section>
+
+    <section class="marquee" aria-label="Project capabilities">
+      <div><span>WAKE-WORD GATED</span><i>✦</i><span>LIVE VOICE</span><i>✦</i><span>OPENAI SEARCH</span><i>✦</i><span>CODEX TOOLS</span><i>✦</i><span>LOCAL AUDIO</span><i>✦</i><span>DEVICE-CODE AUTH</span><i>✦</i><span>WAKE-WORD GATED</span><i>✦</i><span>LIVE VOICE</span></div>
+    </section>
+
+    <section class="section setup-section" id="setup">
+      <div class="section-heading reveal">
+        <p class="kicker">01 / SETUP</p>
+        <h2>One installer.<br><em>Your choice of path.</em></h2>
+        <p>The wizard is interactive by default, scriptable for agents, and safe to rerun. Pick the connection you already have—or let it create the missing piece.</p>
+      </div>
+
+      <div class="install-lab reveal">
+        <div class="mode-tabs" role="tablist" aria-label="Installation mode">
+          <button class="mode-tab active" role="tab" aria-selected="true" data-mode="guided">Guided</button>
+          <button class="mode-tab" role="tab" aria-selected="false" data-mode="cloudflare">Cloudflare</button>
+          <button class="mode-tab" role="tab" aria-selected="false" data-mode="existing">Existing HTTPS</button>
+          <button class="mode-tab" role="tab" aria-selected="false" data-mode="agent">Local agent</button>
+        </div>
+        <div class="install-panel">
+          <div class="install-meta">
+            <span id="mode-number">PATH 01</span>
+            <b id="mode-title">Interactive, recommended</b>
+            <p id="mode-description">Detect what is already configured, choose from four HTTPS modes, and hand off only the account and dashboard steps.</p>
+          </div>
+          <div class="code-window" data-copy-group>
+            <div class="code-bar"><span>terminal</span><button class="copy-button" type="button" data-copy>Copy</button></div>
+            <pre><code id="install-code">curl -fsSL https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/install.sh | bash</code></pre>
+          </div>
+          <div class="mode-points" id="mode-points">
+            <span>Interactive prompts</span><span>Idempotent updates</span><span>Guided pairing</span>
+          </div>
+        </div>
+      </div>
+
+      <ol class="setup-steps reveal">
+        <li><span>01</span><div><h3>Prepare the host</h3><p>Install or update the bridge, choose HTTPS, build the Ability, and start only the services your configuration is ready for.</p></div></li>
+        <li><span>02</span><div><h3>Sync OpenHome</h3><p>The guided finish step prints the exact Third Party Keys and the shortest dashboard checklist.</p></div></li>
+        <li><span>03</span><div><h3>Pair ChatGPT</h3><p>Retrieve the DevKit code from the private host inbox and authorize in any trusted browser. No speaker dictation required.</p></div></li>
+        <li><span>04</span><div><h3>Say “Juniper”</h3><p>Every new request starts with the local wake phrase. Context stays alive; ambient room audio stays gated.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="section architecture-section" id="architecture">
+      <div class="section-heading light reveal">
+        <p class="kicker">02 / ARCHITECTURE</p>
+        <h2>One voice.<br><em>Three specialist lanes.</em></h2>
+        <p>GPT Live stays conversational while the bridge routes current information and local action to the right place.</p>
+      </div>
+      <div class="route-grid reveal">
+        <article class="route-card live-route">
+          <div class="route-icon">◎</div><span class="route-number">01</span>
+          <h3>GPT Live</h3>
+          <p>Speech, conversation, explanations, memory in-session, and clock questions.</p>
+          <div class="route-example">“Explain that more simply.”</div>
+        </article>
+        <article class="route-card search-route">
+          <div class="route-icon">⌁</div><span class="route-number">02</span>
+          <h3>OpenAI search</h3>
+          <p>News, weather, current facts, and simple web searches—without occupying Codex.</p>
+          <div class="route-example">“What changed today?”</div>
+        </article>
+        <article class="route-card codex-route">
+          <div class="route-icon">⌘</div><span class="route-number">03</span>
+          <h3>Codex tools</h3>
+          <p>Files, code, projects, OpenHome actions, applications, and computer control.</p>
+          <div class="route-example">“Build it in my workspace.”</div>
+        </article>
+      </div>
+      <div class="flow-line reveal" aria-label="Data flow">
+        <div><b>ROOM</b><span>Juniper + request</span></div><i>→</i>
+        <div><b>DEVKIT</b><span>wake gate + WebRTC audio</span></div><i>→</i>
+        <div><b>HOST</b><span>auth + routing + tools</span></div><i>→</i>
+        <div><b>GPT LIVE</b><span>streaming speech back</span></div>
+      </div>
+    </section>
+
+    <section class="section feature-section">
+      <div class="section-heading reveal">
+        <p class="kicker">03 / BUILT FOR REAL ROOMS</p>
+        <h2>Less demo.<br><em>More appliance.</em></h2>
+      </div>
+      <div class="feature-grid reveal">
+        <article class="feature feature-wide"><span class="feature-tag">WAKE</span><h3>Juniper, every time.</h3><p>The offline wake gate closes after every answer without discarding the Live conversation. Background TV chatter does not become a request.</p><div class="gate-demo"><span>ambient</span><i></i><b>JUNIPER</b><i class="open"></i><span>request</span></div></article>
+        <article class="feature"><span class="feature-tag">AUTH</span><h3>Your ChatGPT access.</h3><p>Device-code authorization through Login with ChatGPT. No OpenAI API key and no browser cookie capture.</p></article>
+        <article class="feature"><span class="feature-tag">AUDIO</span><h3>Interrupt naturally.</h3><p>PipeWire WebRTC echo cancellation, playback-aware barge-in, and a safety guard against speaker self-wake loops.</p></article>
+        <article class="feature"><span class="feature-tag">STATE</span><h3>Tasks that report back.</h3><p>Codex handoffs acknowledge the start, serialize overlapping work, and speak a completion result.</p></article>
+        <article class="feature feature-accent"><span class="feature-tag">HOST</span><h3>Mac or Linux.</h3><p>The speaker handles live audio. Your always-on computer keeps credentials, search, and tools under your control.</p><div class="os-row"><span>macOS</span><span>Linux</span><span>OpenHome</span></div></article>
+      </div>
+    </section>
+
+    <section class="section voices-section" id="voices">
+      <div class="voice-stage reveal">
+        <div class="section-heading light">
+          <p class="kicker">04 / VOICES</p>
+          <h2>Choose the voice.<br><em>Keep the wake phrase.</em></h2>
+          <p>Speaking voice and wake phrase are independent. Save a new voice in the browser control page and GPT Live reconnects automatically.</p>
+        </div>
+        <div class="voice-orb" aria-hidden="true"><span></span><i></i></div>
+        <div class="selected-voice"><small>NOW SPEAKING</small><strong id="selected-voice">Vale</strong><p id="voice-line">Warm, direct, and ready when you say “Juniper.”</p></div>
+        <div class="voice-picker" role="list" aria-label="Available GPT Live voices">
+          <button type="button" data-voice="Arbor">Arbor</button><button type="button" data-voice="Breeze">Breeze</button><button type="button" data-voice="Cove">Cove</button><button type="button" data-voice="Ember">Ember</button><button type="button" data-voice="Juniper">Juniper</button><button type="button" data-voice="Maple">Maple</button><button type="button" data-voice="Sol">Sol</button><button type="button" data-voice="Spruce">Spruce</button><button class="active" type="button" data-voice="Vale">Vale</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section resilience-section">
+      <div class="section-heading reveal">
+        <p class="kicker">05 / RESILIENT BY DEFAULT</p>
+        <h2>Safe to rerun.<br><em>Easy to resume.</em></h2>
+        <p>The installer treats an existing speaker as valuable state, not disposable scaffolding.</p>
+      </div>
+      <div class="resilience-list reveal">
+        <div><span>01</span><h3>State survives updates</h3><p>Secrets, ChatGPT login, pairing, tunnel credentials, and the existing Ability id stay in place.</p></div>
+        <div><span>02</span><h3>Components are optional</h3><p>Configure Codex, OpenHome API automation, Python, or managed tunnels when they add value—not as arbitrary blockers.</p></div>
+        <div><span>03</span><h3>Named tunnel, real service</h3><p>The Cloudflare path links to your account, reuses the tunnel on rerun, validates ingress, and starts with the host.</p></div>
+        <div><span>04</span><h3>Agent-friendly, human-aware</h3><p>Flags and help menus automate machine work while account, DNS, dashboard, and physical steps remain explicit handoffs.</p></div>
+      </div>
+    </section>
+
+    <section class="section faq-section" id="faq">
+      <div class="section-heading reveal">
+        <p class="kicker">06 / FAQ</p>
+        <h2>The short answers.</h2>
+      </div>
+      <div class="faq-list reveal">
+        <details><summary>Does the DevKit need Chromium or an interactive display?<span>+</span></summary><p>No. Open the host's `/setup` URL in any trusted browser. The DevKit stays headless and handles only speaker audio plus the Local Ability.</p></details>
+        <details><summary>Is a phone required?<span>+</span></summary><p>No. A phone, tablet, the host computer, or another computer can hold the paired browser session. It is not an OpenHome mobile feature.</p></details>
+        <details><summary>Do I need an OpenAI API key?<span>+</span></summary><p>No. Login with ChatGPT uses device-code authorization and the connected subscription. This project does not ask for ChatGPT browser cookies.</p></details>
+        <details><summary>Do I need Codex?<span>+</span></summary><p>Only for local files, projects, apps, or computer actions. GPT Live conversation and OpenAI web search can run without Codex.</p></details>
+        <details><summary>Is Cloudflare required?<span>+</span></summary><p>No. Use an existing stable HTTPS reverse proxy, let the wizard create a persistent named Cloudflare Tunnel, evaluate with a temporary Quick Tunnel, or configure HTTPS later.</p></details>
+        <details><summary>Does firmware 1.0.8 work?<span>+</span></summary><p>Yes—it is the physically tested baseline. The guided finish step includes its one-time background-worker bootstrap.</p></details>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div class="reveal"><p class="kicker">THE SPEAKER IS READY WHEN YOU ARE</p><h2>Say “Juniper.”<br><em>Then ask for more.</em></h2></div>
+      <div class="cta-actions reveal"><a class="button primary" href="#setup">Start setup <span>↑</span></a><a class="button outline" href="https://github.com/pkyanam/openhome-gpt-live">Star on GitHub <span>↗</span></a></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>OpenHome <b>× GPT Live</b></span></div>
+    <p>Independent, experimental, self-hosted. Not an OpenHome or OpenAI product.</p>
+    <div><a href="https://github.com/pkyanam/openhome-gpt-live">GitHub</a><a href="https://github.com/pkyanam/openhome-gpt-live/blob/main/SECURITY.md">Security</a><a href="https://github.com/pkyanam/openhome-gpt-live/blob/main/LICENSE">MIT</a></div>
+  </footer>
+
+  <div class="toast" role="status" aria-live="polite">Copied to clipboard</div>
+  <script src="./script.js"></script>
+</body>
+</html>
