@@ -21,16 +21,58 @@ import devkit_functions as live
 
 
 class DevKitProtocolTests(unittest.TestCase):
-    def test_wake_preroll_cannot_starve_the_following_prompt(self):
+    def test_wake_preroll_retains_a_combined_wake_and_prompt_boundary(self):
         replay_seconds = (
             live.WAKE_PREROLL_FRAMES * live.AUDIO_SAMPLES / live.AUDIO_RATE
         )
-        capture_bytes = (
-            live.WAKE_PREROLL_FRAMES * live.AUDIO_BYTES * live.AEC_CHANNELS
-        )
 
-        self.assertLessEqual(replay_seconds, 0.1)
-        self.assertLess(capture_bytes, 64 * 1024)
+        self.assertEqual(replay_seconds, 0.5)
+
+    def test_wake_replay_drains_fresh_capture_without_growing_the_queue(self):
+        pending = deque([b"wake-1", b"wake-2"])
+
+        first = live._forward_live_audio(pending, b"prompt-1")
+        second = live._forward_live_audio(pending, b"prompt-2")
+        third = live._forward_live_audio(pending, b"prompt-3")
+
+        self.assertEqual(first, b"wake-1")
+        self.assertEqual(second, b"wake-2")
+        self.assertEqual(third, b"prompt-1")
+        self.assertEqual(list(pending), [b"prompt-2", b"prompt-3"])
+        self.assertEqual(len(pending), 2)
+
+    def test_worker_session_fallback_outlives_the_host_ttl_boundary(self):
+        self.assertGreater(live.DEFAULT_MAX_SESSION_SECONDS, 12 * 60 * 60)
+
+    def test_background_work_acceptance_rearms_the_physical_wake_gate(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                yield json.dumps({"type": "handoff.started"})
+                yield json.dumps({"type": "search.started"})
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class Client:
+            def stream(self, *_args):
+                return Response()
+
+        accepted = []
+        asyncio.run(live._consume_bridge_events(
+            Client(),
+            {"device_id": "dev_1"},
+            "live_1",
+            asyncio.Event(),
+            accepted.append,
+        ))
+
+        self.assertEqual(accepted, ["Codex", "search"])
 
     def test_decodes_direct_and_nested_realtime_events(self):
         event = {"type": "state_update", "payload": {"new_state": "speaking"}}
@@ -179,7 +221,7 @@ class DevKitProtocolTests(unittest.TestCase):
             if sync_count == 2:
                 config["voice"] = "vale"
 
-        async def fake_run_live(_client, config, _model, stop_event):
+        async def fake_run_live(_client, config, _model, stop_event, _wake_safety):
             voices.append(config["voice"])
             if len(voices) == 2:
                 stop_event.set()
@@ -329,12 +371,59 @@ class DevKitProtocolTests(unittest.TestCase):
         downsampled.frombytes(live._downsample_48k_to_16k(source))
         self.assertEqual(downsampled.tolist(), [6, 15])
 
-    def test_wake_grammar_uses_only_the_configured_name(self):
+    def test_wake_keyword_search_uses_only_the_configured_name(self):
         aliases = live._wake_phrase_aliases("Juniper")
         self.assertEqual(aliases, ("juniper",))
         self.assertEqual(live._wake_phrase_aliases("Hey-Home"), ("hey home",))
+        self.assertGreater(live.WAKE_KWS_THRESHOLD, 1e-30)
 
-    def test_wake_grammar_confirms_exact_hits_inside_a_short_window(self):
+    def test_wake_detector_uses_keyword_search_instead_of_one_word_grammar(self):
+        calls = []
+
+        class Decoder:
+            def __init__(self, **kwargs):
+                calls.append(kwargs)
+
+            def start_utt(self):
+                return None
+
+        original = sys.modules.get("pocketsphinx")
+        sys.modules["pocketsphinx"] = types.SimpleNamespace(Decoder=Decoder)
+        try:
+            live.WakePhraseDetector("Lara")
+        finally:
+            if original is None:
+                del sys.modules["pocketsphinx"]
+            else:
+                sys.modules["pocketsphinx"] = original
+
+        self.assertEqual(calls[0]["keyphrase"], "lara")
+        self.assertEqual(calls[0]["kws_threshold"], live.WAKE_KWS_THRESHOLD)
+        self.assertNotIn("jsgf", calls[0])
+
+    def test_repeated_wakes_trip_a_persistent_session_cooldown(self):
+        safety = {"activations": deque(), "locked_until": 0.0}
+        for index in range(live.WAKE_RATE_LIMIT - 1):
+            self.assertFalse(live._record_wake_activation(safety, now=float(index)))
+
+        self.assertTrue(live._record_wake_activation(
+            safety,
+            now=float(live.WAKE_RATE_LIMIT - 1),
+        ))
+        remaining = live._wake_lockout_remaining(
+            safety,
+            now=float(live.WAKE_RATE_LIMIT),
+        )
+        self.assertGreater(remaining, 0.0)
+        self.assertEqual(
+            live._wake_lockout_remaining(
+                safety,
+                now=float(live.WAKE_RATE_LIMIT - 1 + live.WAKE_LOCKOUT_SECONDS),
+            ),
+            0.0,
+        )
+
+    def test_wake_keyword_confirms_exact_hits_inside_a_short_window(self):
         aliases = live._wake_phrase_aliases("juniper")
         frames = 0
         deadline = 0.0
@@ -369,7 +458,7 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(frames, 0)
         self.assertEqual(deadline, 0.0)
 
-    def test_wake_grammar_tolerates_brief_blank_frames_but_not_old_hits(self):
+    def test_wake_keyword_tolerates_brief_blank_frames_but_not_old_hits(self):
         aliases = live._wake_phrase_aliases("lara")
         frames, deadline, confirmed = live._advance_wake_confirmation(
             0, 0.0, "lara", 0.90, aliases, 20.0

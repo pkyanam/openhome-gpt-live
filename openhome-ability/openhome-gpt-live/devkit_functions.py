@@ -13,7 +13,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 from urllib.parse import urlparse
@@ -24,7 +23,10 @@ try:
     from devkit_utils.devkit_logging import web_logger as log
 except ImportError:  # Enables local protocol tests outside OpenHome OS.
     import logging
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    )
     log = logging.getLogger("openhome_gpt_live")
 
 
@@ -54,16 +56,21 @@ SUPPORTED_VOICES = {
     "maple", "sol", "spruce", "vale",
 }
 DEFAULT_ACTIVE_IDLE_SECONDS = 30
+DEFAULT_MAX_SESSION_SECONDS = 12 * 60 * 60 + 60
 RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
-# Keep only the tiny tail needed to preserve the first syllable after a short
-# wake name. A 500 ms replay stopped reading fresh capture long enough to fill
-# the parec pipe and drop the user's immediately following prompt, making the
-# already-open second attempt appear more reliable than the first.
-WAKE_PREROLL_FRAMES = 4
+# Preserve enough audio for a combined "Lara, <prompt>" utterance when keyword
+# spotting confirms near the end of the wake name. While this backlog is sent,
+# recv() still drains one fresh capture frame into the bounded queue on every
+# call, so the parec pipe cannot fill and discard the rest of the prompt.
+WAKE_PREROLL_FRAMES = 25
+WAKE_KWS_THRESHOLD = 1e-12
 WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
 WAKE_CONFIRM_FRAMES = 3
 WAKE_CONFIRM_WINDOW_SECONDS = 0.8
+WAKE_RATE_LIMIT = 6
+WAKE_RATE_WINDOW_SECONDS = 2 * 60
+WAKE_LOCKOUT_SECONDS = 30 * 60
 WAKE_SILENCE_RMS = 20.0
 WAKE_SILENCE_FRAMES = 25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
@@ -151,7 +158,7 @@ def configure_and_start(
                 "playback_device": str(playback_device).strip() or "default",
                 "wake_phrase": configured_wake_phrase,
                 "active_idle_seconds": _validate_active_idle_seconds(active_idle_seconds),
-                "max_session_seconds": 30 * 60,
+                "max_session_seconds": DEFAULT_MAX_SESSION_SECONDS,
                 **({
                     "pairing_code": registration["pairingCode"],
                     "pairing_issued_at": time.time(),
@@ -358,10 +365,24 @@ def _is_default_agent_audio_stream(stream):
 async def _run_reconnecting_worker(client, config, stop_event):
     """Keep Live connected without relying on OpenHome or systemd to respawn us."""
     retry_seconds = RECONNECT_BASE_SECONDS
+    wake_safety = {"activations": deque(), "locked_until": 0.0}
     while not stop_event.is_set():
         model = None
         connected_at = None
         try:
+            lockout_remaining = _wake_lockout_remaining(wake_safety)
+            if lockout_remaining > 0:
+                _write_status(
+                    "wake_lockout",
+                    message=(
+                        "GPT Live paused after repeated wake detections. "
+                        "It will retry automatically after the safety cooldown."
+                    ),
+                    voice=config.get("voice", DEFAULT_VOICE),
+                    wake_phrase=config.get("wake_phrase", DEFAULT_WAKE_PHRASE),
+                )
+                await _wait_or_stop(stop_event, lockout_remaining)
+                continue
             session = await _wait_for_chatgpt_auth(client, config, stop_event)
             if stop_event.is_set():
                 break
@@ -378,7 +399,7 @@ async def _run_reconnecting_worker(client, config, stop_event):
                 account=session.get("user", {}).get("email"),
             )
             connected_at = time.monotonic()
-            await _run_live_session(client, config, model, stop_event)
+            await _run_live_session(client, config, model, stop_event, wake_safety)
             if stop_event.is_set():
                 break
             lived_seconds = time.monotonic() - connected_at
@@ -460,7 +481,7 @@ async def _sync_device_settings(client, config):
     return config
 
 
-async def _run_live_session(client, config, model, stop_event):
+async def _run_live_session(client, config, model, stop_event, wake_safety=None):
     try:
         from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
         from av import AudioFrame, AudioResampler
@@ -485,6 +506,8 @@ async def _run_live_session(client, config, model, stop_event):
         "phrase": config.get("wake_phrase", DEFAULT_WAKE_PHRASE),
         "idle_seconds": int(config.get("active_idle_seconds", DEFAULT_ACTIVE_IDLE_SECONDS)),
     }
+    if wake_safety is None:
+        wake_safety = {"activations": deque(), "locked_until": 0.0}
     playback_error = {"value": None}
     playback_control = {
         "cutoff": False,
@@ -553,138 +576,154 @@ async def _run_live_session(client, config, model, stop_event):
             return was_active
 
         async def recv(self):
-            if self._pending:
-                data = self._pending.popleft()
-            else:
-                capture_bytes = AUDIO_BYTES * AEC_CHANNELS if self._device == "default" else AUDIO_BYTES
-                captured = await asyncio.to_thread(
-                    _read_exact, self._process.stdout, capture_bytes
+            capture_bytes = AUDIO_BYTES * AEC_CHANNELS if self._device == "default" else AUDIO_BYTES
+            captured = await asyncio.to_thread(
+                _read_exact, self._process.stdout, capture_bytes
+            )
+            if len(captured) != capture_bytes:
+                self._capture_failures += 1
+                detail = _capture_process_error(self._process)
+                log.warning(
+                    "GPT Live microphone stream ended; reopening it (%s/3)%s",
+                    self._capture_failures,
+                    f": {detail}" if detail else ".",
                 )
-                if len(captured) != capture_bytes:
-                    self._capture_failures += 1
-                    detail = _capture_process_error(self._process)
-                    log.warning(
-                        "GPT Live microphone stream ended; reopening it (%s/3)%s",
-                        self._capture_failures,
-                        f": {detail}" if detail else ".",
-                    )
-                    _terminate_capture_process(self._process)
-                    if self._capture_failures >= 3:
-                        raise RuntimeError("The microphone stream repeatedly ended unexpectedly.")
-                    if self._device == "default":
-                        _ensure_echo_cancel()
-                    self._process = _open_capture_process(self._device)
-                    await asyncio.sleep(0.2)
-                    captured = bytes(capture_bytes)
-                else:
-                    self._capture_failures = 0
-                data = _select_capture_audio(captured, self._device)
+                _terminate_capture_process(self._process)
+                if self._capture_failures >= 3:
+                    raise RuntimeError("The microphone stream repeatedly ended unexpectedly.")
+                if self._device == "default":
+                    _ensure_echo_cancel()
+                self._process = _open_capture_process(self._device)
+                await asyncio.sleep(0.2)
+                captured = bytes(capture_bytes)
+            else:
+                self._capture_failures = 0
+            live_data = _select_capture_audio(captured, self._device)
+            data = _forward_live_audio(self._pending, live_data)
 
-                if not wake_state["active"]:
-                    self._preroll.append(data)
-                    wake_detected = self._wake_detector.process(data)
-                    now = time.monotonic()
-                    wake_rms = _pcm_rms(data) if wake_detected else 0.0
-                    if wake_detected and not _wake_allowed_during_playback(
+            if not wake_state["active"]:
+                self._preroll.append(live_data)
+                wake_detected = self._wake_detector.process(live_data)
+                now = time.monotonic()
+                wake_rms = _pcm_rms(data) if wake_detected else 0.0
+                if wake_detected and not _wake_allowed_during_playback(
+                    wake_rms,
+                    remote_state,
+                    playback_control,
+                    now,
+                ):
+                    log.info(
+                        "Ignored likely speaker-echo wake at %.1f RMS while GPT Live was talking",
                         wake_rms,
-                        remote_state,
-                        playback_control,
-                        now,
-                    ):
-                        log.info(
-                            "Ignored likely speaker-echo wake at %.1f RMS while GPT Live was talking",
-                            wake_rms,
-                        )
-                        data = bytes(AUDIO_BYTES)
-                    elif wake_detected:
-                        open_voice_turn()
-                        wake_state["active"] = True
-                        wake_state["assistant_response_seen"] = False
-                        wake_state["last_activity"] = now
-                        wake_state["last_wake"] = now
-                        wake_state["last_user_speech"] = now
-                        wake_state["response_latency_logged"] = False
-                        self._pending.extend(self._preroll)
-                        self._preroll.clear()
-                        log.info(
-                            "GPT Live wake gate is forwarding %d ms of buffered audio",
-                            len(self._pending) * AUDIO_SAMPLES * 1000 // AUDIO_RATE,
-                        )
-                        data = self._pending.popleft()
-                        log.info("GPT Live wake phrase detected: %s", wake_state["phrase"])
-                        _maybe_interrupt(
-                            data,
-                            remote_state,
-                            data_channel_holder["channel"],
-                            playback_control,
-                            wake_word=True,
-                        )
-                        _write_status(
-                            "live",
-                            message=f"{wake_state['phrase'].title()} heard. GPT Live is listening.",
-                            model=model,
-                            voice=config.get("voice", DEFAULT_VOICE),
-                            wake_phrase=wake_state["phrase"],
-                        )
-                    else:
-                        data = bytes(AUDIO_BYTES)
-                elif _should_recycle_unresponsive_session(wake_state):
-                    # `/wm` can leave WebRTC and its data channel open after a
-                    # native search while silently refusing every later audio
-                    # turn. Re-arming that transport only creates a permanent
-                    # false-live state. Tear it down after one unanswered,
-                    # authenticated request so the outer worker negotiates a
-                    # fresh Live call and the next wake works again.
-                    self.arm_for_next_request("an unanswered request")
-                    log.warning(
-                        "GPT Live accepted a wake request but produced no response; recycling the stale session"
+                    )
+                    data = bytes(AUDIO_BYTES)
+                elif wake_detected and _record_wake_activation(wake_safety, now):
+                    log.error(
+                        "GPT Live safety lockout: %d wake detections inside %d seconds",
+                        WAKE_RATE_LIMIT,
+                        WAKE_RATE_WINDOW_SECONDS,
                     )
                     _write_status(
-                        "reconnecting",
-                        message="GPT Live stopped answering and is reconnecting automatically.",
+                        "wake_lockout",
+                        message=(
+                            "GPT Live paused after repeated wake detections. "
+                            "It will retry automatically after the safety cooldown."
+                        ),
                         model=model,
                         voice=config.get("voice", DEFAULT_VOICE),
                         wake_phrase=wake_state["phrase"],
                     )
                     connection_closed.set()
                     data = bytes(AUDIO_BYTES)
+                elif wake_detected:
+                    open_voice_turn()
+                    wake_state["active"] = True
+                    wake_state["assistant_response_seen"] = False
+                    wake_state["last_activity"] = now
+                    wake_state["last_wake"] = now
+                    wake_state["last_user_speech"] = now
+                    wake_state["response_latency_logged"] = False
+                    self._pending.extend(self._preroll)
+                    self._preroll.clear()
+                    log.info(
+                        "GPT Live wake gate is forwarding %d ms of buffered audio",
+                        len(self._pending) * AUDIO_SAMPLES * 1000 // AUDIO_RATE,
+                    )
+                    data = self._pending.popleft()
+                    log.info("GPT Live wake phrase detected: %s", wake_state["phrase"])
+                    _maybe_interrupt(
+                        data,
+                        remote_state,
+                        data_channel_holder["channel"],
+                        playback_control,
+                        wake_word=True,
+                    )
+                    _write_status(
+                        "live",
+                        message=f"{wake_state['phrase'].title()} heard. GPT Live is listening.",
+                        model=model,
+                        voice=config.get("voice", DEFAULT_VOICE),
+                        wake_phrase=wake_state["phrase"],
+                    )
                 else:
-                    now = time.monotonic()
-                    if _pcm_rms(data) >= REQUEST_SPEECH_RMS:
-                        wake_state["last_user_speech"] = now
-                    if _should_arm_after_response_audio(
-                        wake_state,
+                    data = bytes(AUDIO_BYTES)
+            elif _should_recycle_unresponsive_session(wake_state):
+                # `/wm` can leave WebRTC and its data channel open after a
+                # native search while silently refusing every later audio
+                # turn. Re-arming that transport only creates a permanent
+                # false-live state. Tear it down after one unanswered,
+                # authenticated request so the outer worker negotiates a
+                # fresh Live call and the next wake works again.
+                self.arm_for_next_request("an unanswered request")
+                log.warning(
+                    "GPT Live accepted a wake request but produced no response; recycling the stale session"
+                )
+                _write_status(
+                    "reconnecting",
+                    message="GPT Live stopped answering and is reconnecting automatically.",
+                    model=model,
+                    voice=config.get("voice", DEFAULT_VOICE),
+                    wake_phrase=wake_state["phrase"],
+                )
+                connection_closed.set()
+                data = bytes(AUDIO_BYTES)
+            else:
+                now = time.monotonic()
+                if _pcm_rms(data) >= REQUEST_SPEECH_RMS:
+                    wake_state["last_user_speech"] = now
+                if _should_arm_after_response_audio(
+                    wake_state,
+                    playback_control,
+                    now,
+                ):
+                    self.arm_for_next_request("the assistant response finished")
+                    _write_armed_status(config, model, wake_state["phrase"])
+                    data = bytes(AUDIO_BYTES)
+                else:
+                    output_is_playing = _output_is_playing(
+                        remote_state,
                         playback_control,
                         now,
+                    )
+                    wake_interrupt = False
+                    if (
+                        output_is_playing
+                        and now - wake_state["last_wake"] >= WAKE_INTERRUPT_GUARD_SECONDS
+                        and now - remote_state["changed_at"] >= WAKE_INTERRUPT_GUARD_SECONDS
+                        and self._wake_detector.process(data)
                     ):
-                        self.arm_for_next_request("the assistant response finished")
-                        _write_armed_status(config, model, wake_state["phrase"])
-                        data = bytes(AUDIO_BYTES)
-                    else:
-                        output_is_playing = _output_is_playing(
-                            remote_state,
-                            playback_control,
-                            now,
-                        )
-                        wake_interrupt = False
-                        if (
-                            output_is_playing
-                            and now - wake_state["last_wake"] >= WAKE_INTERRUPT_GUARD_SECONDS
-                            and now - remote_state["changed_at"] >= WAKE_INTERRUPT_GUARD_SECONDS
-                            and self._wake_detector.process(data)
-                        ):
-                            wake_interrupt = True
-                            wake_state["last_wake"] = now
-                        _maybe_interrupt(
-                            data,
-                            remote_state,
-                            data_channel_holder["channel"],
-                            playback_control,
-                            wake_word=wake_interrupt,
-                        )
-                        if wake_interrupt:
-                            open_voice_turn()
-                            wake_state["last_activity"] = now
+                        wake_interrupt = True
+                        wake_state["last_wake"] = now
+                    _maybe_interrupt(
+                        data,
+                        remote_state,
+                        data_channel_holder["channel"],
+                        playback_control,
+                        wake_word=wake_interrupt,
+                    )
+                    if wake_interrupt:
+                        open_voice_turn()
+                        wake_state["last_activity"] = now
             frame = AudioFrame(format="s16", layout="mono", samples=AUDIO_SAMPLES)
             frame.planes[0].update(data)
             frame.sample_rate = AUDIO_RATE
@@ -843,8 +882,23 @@ async def _run_live_session(client, config, model, stop_event):
     completed_error = None
     try:
         await asyncio.wait_for(data_channel_open.wait(), timeout=10)
-        bridge_task = asyncio.create_task(_consume_bridge_events(client, config, live_session_id, connection_closed))
-        max_timer = asyncio.create_task(asyncio.sleep(int(config.get("max_session_seconds", 1800))))
+        def on_background_work_started(kind):
+            if input_track.arm_for_next_request(f"the {kind} request was accepted"):
+                _write_armed_status(config, model, wake_state["phrase"])
+
+        bridge_task = asyncio.create_task(_consume_bridge_events(
+            client,
+            config,
+            live_session_id,
+            connection_closed,
+            on_background_work_started,
+        ))
+        # The host owns the long-lived session TTL. This slightly longer local
+        # fallback avoids the old race where both sides expired at 30 minutes.
+        max_timer = asyncio.create_task(asyncio.sleep(max(
+            int(config.get("max_session_seconds", DEFAULT_MAX_SESSION_SECONDS)),
+            DEFAULT_MAX_SESSION_SECONDS,
+        )))
         stop_task = asyncio.create_task(stop_event.wait())
         close_task = asyncio.create_task(connection_closed.wait())
         done, _ = await asyncio.wait(
@@ -969,7 +1023,13 @@ async def _play_remote_audio(
             _terminate_playback_process(process)
 
 
-async def _consume_bridge_events(client, config, live_session_id, closed_event):
+async def _consume_bridge_events(
+    client,
+    config,
+    live_session_id,
+    closed_event,
+    on_background_work_started=None,
+):
     path = _device_path(config, f"/realtime/app-server/{live_session_id}/events")
     async with client.stream("GET", path) as response:
         response.raise_for_status()
@@ -981,7 +1041,12 @@ async def _consume_bridge_events(client, config, live_session_id, closed_event):
             except json.JSONDecodeError:
                 continue
             event_type = event.get("type")
-            if event_type == "tool.pending_confirmation":
+            if event_type in ("handoff.started", "search.started"):
+                if callable(on_background_work_started):
+                    on_background_work_started(
+                        "Codex" if event_type == "handoff.started" else "search"
+                    )
+            elif event_type == "tool.pending_confirmation":
                 _write_status(
                     "approval_pending",
                     message="An OpenHome action is waiting for approval in the paired browser control page.",
@@ -1454,28 +1519,16 @@ class WakePhraseDetector:
         except ImportError as error:
             raise RuntimeError("PocketSphinx was not installed for offline wake-word detection.") from error
         self._aliases = _wake_phrase_aliases(phrase)
-        grammar_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".jsgf",
-                encoding="utf-8",
-                delete=False,
-            ) as grammar_file:
-                grammar_file.write(
-                    "#JSGF V1.0; grammar wake; public <wake> = "
-                    + " | ".join(self._aliases)
-                    + ";"
-                )
-                grammar_path = grammar_file.name
-            self._decoder = Decoder(
-                jsgf=grammar_path,
-                samprate=16_000,
-                logfn=os.devnull,
-            )
-        finally:
-            if grammar_path:
-                Path(grammar_path).unlink(missing_ok=True)
+        # A one-word JSGF has only one legal result, so ordinary room speech is
+        # repeatedly forced into the configured name. PocketSphinx's keyphrase
+        # search instead compares the wake name against alternative speech and
+        # applies its own likelihood-ratio threshold.
+        self._decoder = Decoder(
+            keyphrase=self._aliases[0],
+            kws_threshold=WAKE_KWS_THRESHOLD,
+            samprate=16_000,
+            logfn=os.devnull,
+        )
         self._confirmation_frames = 0
         self._confirmation_deadline = 0.0
         self._quiet_frames = 0
@@ -1509,7 +1562,8 @@ class WakePhraseDetector:
         hypothesis = self._decoder.hyp()
         now = time.monotonic()
         heard = hypothesis.hypstr.strip().lower() if hypothesis is not None else None
-        score = float(getattr(hypothesis, "best_score", 0.0)) if hypothesis is not None else 0.0
+        score = 1.0 if hypothesis is not None else 0.0
+        ratio = float(getattr(hypothesis, "prob", 0.0)) if hypothesis is not None else 0.0
         previous_confirmation_frames = self._confirmation_frames
         (
             self._confirmation_frames,
@@ -1524,7 +1578,7 @@ class WakePhraseDetector:
             now,
         )
         if previous_confirmation_frames == 0 and self._confirmation_frames == 1:
-            log.info("GPT Live wake candidate: %s (score %.3f)", heard, score)
+            log.info("GPT Live wake candidate: %s (keyword ratio %.3g)", heard, ratio)
         if confirmed:
             confirmation_ms = max(
                 0.0,
@@ -1537,10 +1591,33 @@ class WakePhraseDetector:
 
 def _wake_phrase_aliases(phrase):
     normalized = " ".join(str(phrase).replace("-", " ").lower().split())
-    # Keep the grammar exact. Broad phonetic aliases such as "june it for"
+    # Keep keyword search exact. Broad phonetic aliases such as "june it for"
     # made synthesized playback and ordinary room noise indistinguishable from
     # an owner saying the configured wake name.
     return (normalized,)
+
+
+def _record_wake_activation(wake_safety, now=None):
+    """Trip a cooldown before a burst of false wakes can keep talking."""
+    now = time.monotonic() if now is None else now
+    activations = wake_safety.setdefault("activations", deque())
+    while activations and now - activations[0] >= WAKE_RATE_WINDOW_SECONDS:
+        activations.popleft()
+    activations.append(now)
+    if len(activations) < WAKE_RATE_LIMIT:
+        return False
+    wake_safety["locked_until"] = now + WAKE_LOCKOUT_SECONDS
+    activations.clear()
+    return True
+
+
+def _wake_lockout_remaining(wake_safety, now=None):
+    now = time.monotonic() if now is None else now
+    remaining = float(wake_safety.get("locked_until", 0.0)) - now
+    if remaining > 0:
+        return remaining
+    wake_safety["locked_until"] = 0.0
+    return 0.0
 
 
 def _advance_wake_confirmation(frame_count, deadline, heard, score, aliases, now):
@@ -1585,6 +1662,14 @@ def _select_capture_audio(data, device):
     stereo = array.array("h")
     stereo.frombytes(data)
     return array.array("h", stereo[AEC_CAPTURE_CHANNEL::AEC_CHANNELS]).tobytes()
+
+
+def _forward_live_audio(pending, live_data):
+    """Drain capture continuously while replaying a bounded wake backlog."""
+    if not pending:
+        return live_data
+    pending.append(live_data)
+    return pending.popleft()
 
 
 def _downsample_48k_to_16k(data):

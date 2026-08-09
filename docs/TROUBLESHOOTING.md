@@ -126,15 +126,20 @@ routed request: OpenAI web search** while Codex remains idle.
 
 ## The first wake request is silent but repeating it works
 
-Upgrade the Ability to **0.3.8 or newer**. Older builds replayed 500 ms of wake
-audio after opening the gate. During that replay the worker was not reading new
-capture frames, which could fill the DevKit audio pipe and discard the prompt
-spoken immediately after a short wake name such as Lara. The already-open
-second attempt then appeared reliable.
+Upgrade the Ability to **0.3.9 or newer**. Version 0.3.8 shortened the retained
+wake boundary to avoid capture backpressure, but PocketSphinx can confirm a
+short custom name near the end of the combined utterance. That could discard
+the prompt before the gate opened.
 
-Version 0.3.8 retains only an 80 ms tail. Say the wake name and prompt naturally
-as one utterance. A healthy worker log reports that the gate forwarded no more
-than 80 ms of buffered audio; it never logs microphone content.
+Version 0.3.9 restores a 500 ms boundary and drains one fresh capture frame into
+a bounded delay queue for every frame it forwards. Say the wake name and prompt
+naturally as one utterance. A healthy worker log reports 500 ms of buffered
+audio; it never logs microphone content.
+
+The speaker does not require manual reactivation after 30 minutes. Version
+0.3.9 removes the simultaneous 30-minute host and DevKit timers. Live remains
+connected through idle periods and automatically reconnects on an upstream or
+long-duration safety close.
 
 ## The first request works, then later wake requests receive no answer
 
@@ -144,6 +149,20 @@ turns. The DevKit now detects one authenticated request with no assistant audio,
 marks the session `reconnecting`, and negotiates a fresh call automatically.
 Pairing, ChatGPT authorization, voice, and wake-name settings are preserved.
 
+## The speaker talks without anyone saying the wake name
+
+Stop the DevKit worker immediately and mute the firmware Chromium streams. In
+versions through 0.3.8, the custom-name detector used a one-answer JSGF grammar.
+Ordinary room audio could be forced into that only legal result and falsely
+confirm Lara. This can produce both unanswered reconnect loops and actual GPT
+Live responses to background audio.
+
+Upgrade to 0.3.9 or newer. The detector now uses PocketSphinx keyphrase spotting
+with a strict likelihood-ratio threshold. A second safety layer pauses Live for
+30 minutes if six accepted detections occur inside two minutes, preventing an
+unattended response loop even if the acoustic detector regresses. New worker
+logs include timestamps and never include microphone audio or transcripts.
+
 If a request receives no answer, wait roughly twenty seconds for `/setup` to
 return to `live`, then say the wake name and request once more. A persistent
 named tunnel is recommended when Quick Tunnel logs also show intermittent 502
@@ -151,11 +170,14 @@ responses.
 
 ## Codex finishes silently, mixes requests, or delays a second task
 
-Upgrade to 0.3.4 or newer. Each request now receives an isolated Codex thread
-and up to four tasks can run in parallel. The bridge acknowledges every accepted
-task, correlates its tools and completion by thread id, and guarantees a fallback
-completion announcement. Confirm `codex --version` and `codex login status`
-work for the same host user, then inspect `data/server-error.log`.
+Upgrade to 0.3.9 or newer. Each request receives an isolated Codex thread and up
+to four tasks can run in parallel. The bridge announces acceptance before it
+waits for task-thread startup, and the DevKit immediately re-arms the physical
+wake gate. A long spoken request or slow Codex launch therefore cannot be
+mistaken for a dead GPT Live session. The bridge correlates tools and completion
+by thread id and guarantees a fallback completion announcement. Confirm
+`codex --version` and `codex login status` work for the same host user, then
+inspect `data/server-error.log`.
 
 ## A media request opens duplicate tabs or Codex keeps clicking
 

@@ -186,8 +186,9 @@ restores those streams.
 | Files, code, projects, OpenHome actions, computer and media-app control | Codex |
 
 Search and Codex work run independently. Each Codex request starts immediately
-in its own isolated thread, up to four at once. GPT Live acknowledges each start
-and announces each result without blocking conversation or OpenAI web search.
+in its own isolated thread, up to four at once. GPT Live acknowledges acceptance
+before waiting for Codex thread startup, immediately re-arms the wake gate, and
+announces each result without blocking conversation or OpenAI web search.
 Browser media is intentionally single-flight: one request may reuse or open one
 tab and start one stream. Codex chooses the tools required by the user's exact
 request. The bridge ends the task when Codex reports completion or when its own
@@ -210,9 +211,13 @@ default. Saving either setting reconnects GPT Live automatically while keeping
 the device pairing and ChatGPT authorization. The new wake name is then
 required before every request and interruption.
 
-The offline gate retains only an 80 ms audio tail, so a natural “Lara, prompt”
-utterance reaches GPT Live on its first attempt without transmitting room audio
-while the speaker is armed.
+The offline gate retains a 500 ms wake boundary, so a natural “Lara, prompt”
+utterance reaches GPT Live on its first attempt. Fresh microphone frames drain
+into a bounded delay queue while that boundary is forwarded, so the rest of the
+prompt is not dropped. PocketSphinx runs in keyphrase-spotting mode rather than
+a one-answer grammar, and a burst circuit breaker pauses Live before repeated
+false detections can make the speaker talk unattended. Armed room audio still
+never leaves the speaker.
 
 For unattended initial setup, pass `--wake-name NAME`. After pairing, the
 server-owned `/setup` selection takes precedence and survives Ability syncs and

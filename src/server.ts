@@ -16,6 +16,7 @@ import { classifyCodexTask, isMediaControlRequest } from "./handoff-routing.ts";
 import { routeVoiceRequest } from "./voice-routing.ts";
 import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
 
+const LIVE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const host = process.env.HOST?.trim() || "127.0.0.1";
 const port = parsePort(process.env.PORT);
 const lwcSecret = process.env.LWC_SECRET?.trim();
@@ -75,6 +76,10 @@ auth = createChatGPTHandler({
   enableRealtime: true,
   realtime: {
     appServer: {
+      // Keep one conversation alive through ordinary room-idle periods. The
+      // DevKit reconnects when Live itself closes; a second 30-minute timer on
+      // each side previously created a simultaneous-expiry race.
+      sessionTtlMs: LIVE_SESSION_TTL_MS,
       tools: [...toolPolicy.tools, ...codexControl.tools],
       executeTool: async (context) => {
         await requireAuthorizedToolUser(context.request);
@@ -180,7 +185,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.8" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.9" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),

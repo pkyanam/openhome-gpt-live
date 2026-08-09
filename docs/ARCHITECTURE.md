@@ -35,14 +35,18 @@ README. `background.py` starts with the OpenHome Personality session and keeps
 the DevKit worker running. Where systemd is available, the worker also installs
 a per-user service so it returns after a power cycle.
 
-PocketSphinx detects the exact configured wake name locally. Juniper is the
-default; voice-name presets and custom English names are supported. While
-armed, the WebRTC microphone track contains silence. After the wake name, the
-worker forwards real microphone frames. During assistant playback the current
-turn stays open for an explicit wake-name barge-in; the ordinary gate re-arms
-only after playback ends. A timeout closes failed turns even when `/wm` emits
-no state event. Every new request and mid-answer interruption requires the wake
-name. Re-arming changes only this local microphone gate:
+PocketSphinx detects the exact configured wake name locally using keyphrase
+spotting with a likelihood-ratio threshold. A one-answer JSGF is deliberately
+not used because it can force unrelated room speech into the configured name.
+Juniper is the default; voice-name presets and custom English names are
+supported. Six accepted wake detections inside two minutes trip a 30-minute
+silent cooldown that survives Live reconnects. While armed, the WebRTC
+microphone track contains silence. After the wake name, the worker forwards real
+microphone frames. During assistant playback the current turn stays open for an
+explicit wake-name barge-in; the ordinary gate re-arms only after playback ends.
+A timeout closes failed turns even when `/wm` emits no state event. Every new
+request and mid-answer interruption requires the wake name. Re-arming changes
+only this local microphone gate:
 the WebRTC connection and GPT Live conversation remain open, preserving context
 across wake-word-gated follow-ups.
 
@@ -91,19 +95,24 @@ claims exactly one lane owner, and every later handoff in that same wake turn is
 suppressed even if GPT Live rephrases it or targets another lane. This prevents
 a completed Codex action from later racing a search or another delegated task.
 
-The offline wake gate retains an 80 ms PCM tail when it opens. This is long
-enough to preserve the start of a no-pause prompt, but short enough that replay
-cannot fill the DevKit capture pipe while fresh speech arrives. Armed room audio
-is still replaced with silence and never leaves the speaker.
+The offline wake gate retains a 500 ms PCM boundary when it opens. This covers
+the wake name when PocketSphinx confirms near the end of a combined wake and
+prompt utterance. While the boundary is forwarded, every fresh capture frame is
+drained into the same bounded delay queue, preventing pipe backpressure from
+discarding the rest of the prompt. Armed room audio is still replaced with
+silence and never leaves the speaker.
 
 The bridge uses client-managed handoffs, so web search does not create a Codex
 turn. The search lane acknowledges immediately, runs independently, and sends
 its speech-friendly result through `thread/realtime/appendSpeech`.
 
 Each Codex request gets a new ephemeral app-server thread and may run in
-parallel, with a four-task safety limit. Handoffs are deduplicated, completion
-events are correlated by thread id, and each task gets a spoken fallback if its
-execution agent omits `speak_to_user`.
+parallel, with a four-task safety limit. Acceptance and its spoken acknowledgement
+happen before task-thread startup. The DevKit consumes that acceptance event and
+re-arms the physical wake gate, so a slow Codex launch cannot trip the 15-second
+silent-response watchdog or block another Lara request. Handoffs are deduplicated,
+completion events are correlated by thread id, and each task gets a spoken
+fallback if its execution agent omits `speak_to_user`.
 
 Media playback is a single-flight sub-lane. Codex receives the user's exact
 request and chooses its tools. The bridge rejects replayed handoffs and exact
@@ -141,7 +150,10 @@ and rebuilds the local wake detector. Voice and wake name remain independent.
 
 - Host launchd/systemd restarts the Bun bridge after failure or reboot.
 - DevKit systemd/OpenHome monitoring restarts the audio worker.
-- GPT Live sessions rotate after 30 minutes and reconnect automatically.
+- GPT Live sessions remain open through ordinary idle periods. The host owns a
+  12-hour safety TTL, the DevKit fallback expires slightly later, and either an
+  upstream close or the safety rotation reconnects automatically without a
+  manual trigger.
 - Exact clock reads come from the host on demand without turn injection.
 - Disabling the Ability and restarting the Agent stops the provider.
 - A stable HTTPS hostname is required; a changing tunnel URL strands the
