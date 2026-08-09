@@ -179,6 +179,49 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(speech).toEqual(["Codex started. You can keep talking while it works."]);
   });
 
+  test("acknowledges a Codex handoff before slow task-thread startup", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    let releaseThreadStart!: () => void;
+    const threadStartGate = new Promise<void>((resolve) => {
+      releaseThreadStart = resolve;
+    });
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      handoffAcknowledgement: "Starting that now.",
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session);
+    const originalExpectResult = (session as any).expectResult.bind(session);
+    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
+      if (method === "thread/start") await threadStartGate;
+      return originalExpectResult(method, params);
+    };
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Play The Office in Helium.",
+      },
+    });
+    await settle();
+
+    expect(speech).toEqual(["Starting that now."]);
+    expect(events).toContainEqual({
+      type: "handoff.started",
+      taskId: expect.any(String),
+      transcript: "Play The Office in Helium.",
+      activeCount: 1,
+    });
+    expect((session as any).activeTasks.size).toBe(1);
+
+    releaseThreadStart();
+    await settle();
+  });
+
   test("retries one native-only handoff and silently suppresses repeated fallback loops", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const speech: string[] = [];

@@ -775,6 +775,16 @@ export class ChatGPTRealtimeAppServerSession {
       () => void this.timeoutTask(task),
       this.timeoutForTask(task),
     );
+    // Acceptance belongs to the responsive Live conversation, not to Codex
+    // startup. A new task thread can take longer than the speaker's silence
+    // watchdog, so acknowledge and expose the task before awaiting it.
+    this.emit({
+      type: "handoff.started",
+      taskId: task.id,
+      transcript: task.transcript,
+      activeCount: this.activeTasks.size,
+    });
+    this.acknowledgeHandoff(task.transcript);
     this.publishTaskState();
     void this.startDelegatedTask(task);
   }
@@ -897,14 +907,6 @@ export class ChatGPTRealtimeAppServerSession {
         if (task.threadId && task.turnId) void this.interruptTurn(task.threadId, task.turnId);
         return;
       }
-      this.emit({
-        type: "handoff.started",
-        taskId: task.id,
-        transcript: task.transcript,
-        activeCount: this.activeTasks.size,
-      });
-      this.acknowledgeHandoff(task.transcript);
-      this.publishTaskState();
     } catch {
       if (!this.activeTasks.has(task.id)) return;
       this.recentHandoffs.delete(task.normalizedTranscript);

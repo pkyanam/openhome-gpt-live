@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.9 - 2026-08-09
+
+- Preserve a 500 ms wake boundary so a combined `Lara, <prompt>` utterance is
+  still available when the offline decoder confirms the wake name near the end
+  of the phrase.
+- Drain fresh microphone capture into a bounded delay queue while forwarding
+  that boundary. This prevents capture-pipe backpressure without discarding the
+  request that follows the wake name.
+- Replace simultaneous 30-minute host and DevKit expiry timers with one
+  host-owned 12-hour safety lifecycle and a slightly later device fallback.
+  Live remains available through ordinary idle periods and reconnects
+  automatically when the provider or safety lifecycle closes a call.
+- Add regression coverage for retained wake context, bounded continuous
+  capture, and the staggered long-lived session fallback.
+- Acknowledge Codex acceptance before task-thread startup and re-arm the DevKit
+  wake gate on accepted Codex or OpenAI search work. Long prompts and slow task
+  launches no longer trip the 15-second silence watchdog or close the Live call.
+- Replace the one-answer wake grammar, which could force ordinary room audio
+  into “Lara,” with PocketSphinx keyphrase spotting and a stricter likelihood
+  threshold. Add a reconnect-persistent safety cooldown after six wake
+  detections in two minutes, plus timestamps for future private diagnostics.
+
 ## 0.3.8 - 2026-08-09
 
 - Fix the silent first request when a user says the wake name and prompt as one

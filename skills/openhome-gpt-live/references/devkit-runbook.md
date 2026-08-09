@@ -50,8 +50,9 @@ one server transaction, and its first accepted handoff has one owner. A later
 rephrased handoff in that wake turn must never race a search or Codex completion.
 
 Codex tasks run in isolated threads, up to four in parallel. GPT Live should
-acknowledge every handoff promptly and announce each completion. Search must
-remain available while Codex tasks run.
+acknowledge every handoff before task-thread startup, immediately re-arm the
+physical wake gate, and announce each completion. Search and new wake requests
+must remain available while Codex tasks run.
 
 Media playback is single-flight. Codex receives the exact request and chooses
 its own tools. It may reuse or open one browser tab and start one stream. A
@@ -64,7 +65,11 @@ delegated tasks at five minutes.
 
 - Require the configured wake name for every new request, including barge-in.
 - A wake name and prompt spoken as one utterance must work on the first attempt.
-  The worker should report no more than 80 ms of buffered wake audio.
+  The worker should report 500 ms of buffered wake audio while continuing to
+  drain fresh capture into a bounded delay queue.
+- Wake detection must use keyphrase spotting, never a one-answer grammar. Six
+  accepted detections inside two minutes must enter a silent 30-minute cooldown
+  that persists across Live reconnects.
 - While GPT Live runs, verify the firmware Chromium capture and playback
   streams are muted; the Ability watchdog must reapply this after restarts.
 - Keep the same Live session so context survives between gated turns.
