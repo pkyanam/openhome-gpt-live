@@ -92,6 +92,13 @@ parallel, with a four-task safety limit. Handoffs are deduplicated, completion
 events are correlated by thread id, and each task gets a spoken fallback if its
 execution agent omits `speak_to_user`.
 
+Media playback is a single-flight sub-lane. The bridge rejects replayed media
+handoffs, tells Codex to reuse one relevant tab and start one stream, caps the
+turn at 12 actionable items or 90 seconds, and interrupts the execution turn as
+soon as `speak_to_user` reports completion. Other direct computer-control turns
+stop after 20 actions or two minutes; ordinary delegated work stops after five
+minutes.
+
 OpenHome mutations use prepare/review/confirm. Workspace-only Codex uses
 `workspace-write`. Browser-confirmed host actions run outside the workspace only
 after `/setup` approval. Full Access deliberately uses `danger-full-access`

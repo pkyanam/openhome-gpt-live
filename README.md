@@ -188,6 +188,10 @@ restores those streams.
 Search and Codex work run independently. Each Codex request starts immediately
 in its own isolated thread, up to four at once. GPT Live acknowledges each start
 and announces each result without blocking conversation or OpenAI web search.
+Browser media is intentionally single-flight: one request may reuse or open one
+tab and start one stream. Completion speech ends the task immediately. Media and
+computer-control work also has bounded action counts and hard deadlines so an
+agent cannot click indefinitely.
 
 ## Voices, wake names, and access
 

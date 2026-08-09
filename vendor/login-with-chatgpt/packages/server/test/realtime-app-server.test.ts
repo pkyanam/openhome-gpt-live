@@ -356,6 +356,231 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect((session as any).tasksByThreadId.has("task_thread_2")).toBe(true);
   });
 
+  test("keeps media playback single-flight and gives it a no-duplicate browser contract", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      now: () => 1_000,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async () => {};
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Lara, play Midnight City on YouTube." },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play the song Midnight City in YouTube." },
+    });
+    await settle();
+
+    expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
+    const turnStart = requests.find((request) => request.method === "turn/start");
+    expect(JSON.stringify(turnStart?.params)).toContain('kind=\\"media\\"');
+    expect(JSON.stringify(turnStart?.params)).toContain("Open at most one new tab and one media stream");
+    expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
+  });
+
+  test("does not classify non-media play requests as media", async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+    });
+    (session as any).speak = async () => {};
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play chess in Chrome." },
+    });
+    await settle();
+
+    const turnStart = requests.find((request) => request.method === "turn/start");
+    expect(JSON.stringify(turnStart?.params)).toContain('kind=\\"computer\\"');
+    expect(JSON.stringify(turnStart?.params)).not.toContain("Media playback contract");
+  });
+
+  test("does not reserve the media replay guard when task capacity rejects a request", async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      now: () => 1_000,
+    });
+    (session as any).speak = async () => {};
+    mockStartedSession(session, requests);
+    for (let index = 0; index < 4; index += 1) {
+      (session as any).activeTasks.set(`busy_${index}`, { id: `busy_${index}`, kind: "general" });
+    }
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play one song on YouTube." },
+    });
+    (session as any).activeTasks.clear();
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play one song on YouTube." },
+    });
+    await settle();
+
+    expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
+  });
+
+  test("starts the hard deadline before delegated thread startup", async () => {
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      mediaTaskTimeoutMs: 5,
+    });
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+    (session as any).expectResult = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params });
+      if (method === "thread/start") {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { result: { thread: { id: "late_thread" } } };
+      }
+      return { result: { turn: { id: "late_turn" } } };
+    };
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play one song on YouTube." },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
+    expect(requests.filter((request) => request.method === "turn/start")).toHaveLength(0);
+    expect((session as any).activeTasks.size).toBe(0);
+    expect(speech.at(-1)).toContain("stopped it before it could keep clicking or open duplicates");
+  });
+
+  test("treats completion speech as terminal and interrupts further computer use", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const wire: Array<Record<string, unknown>> = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async (text: string) => speech.push(text);
+    (session as any).send = (message: Record<string, unknown>) => wire.push(message);
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Open the trailer in Helium." },
+    });
+    await settle();
+    await (session as any).handleTool(51, {
+      callId: "call_speak",
+      threadId: "task_thread_1",
+      turnId: "turn_task_thread_1",
+      tool: "speak_to_user",
+      arguments: { text: "The trailer is playing." },
+    });
+
+    expect(speech).toEqual(["The trailer is playing."]);
+    expect((session as any).activeTasks.size).toBe(0);
+    expect(requests).toContainEqual({
+      method: "turn/interrupt",
+      params: { threadId: "task_thread_1", turnId: "turn_task_thread_1" },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "handoff.completed",
+      status: "completed",
+      fallbackSpeech: false,
+      activeCount: 0,
+    }));
+
+    await (session as any).handleTool(52, {
+      callId: "call_late",
+      threadId: "task_thread_1",
+      turnId: "turn_task_thread_1",
+      tool: "speak_to_user",
+      arguments: { text: "I opened another tab." },
+    });
+    expect(speech).toEqual(["The trailer is playing."]);
+    expect(wire.at(-1)?.["result"]).toEqual(expect.objectContaining({ success: true }));
+  });
+
+  test("interrupts a media task that exceeds its hard deadline", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      mediaTaskTimeoutMs: 5,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play a song on YouTube." },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect((session as any).activeTasks.size).toBe(0);
+    expect(requests).toContainEqual({
+      method: "turn/interrupt",
+      params: { threadId: "task_thread_1", turnId: "turn_task_thread_1" },
+    });
+    expect(speech.at(-1)).toContain("stopped it before it could keep clicking or open duplicates");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "handoff.completed",
+      status: "interrupted",
+      activeCount: 0,
+    }));
+  });
+
+  test("interrupts a media task that loops through too many computer actions", async () => {
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+    });
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play a song on YouTube." },
+    });
+    await settle();
+
+    for (let index = 0; index < 13; index += 1) {
+      (session as any).handleNotification("item/started", {
+        threadId: "task_thread_1",
+        turnId: "turn_task_thread_1",
+        item: {
+          id: `computer_${index}`,
+          type: "mcpToolCall",
+          server: "computer-use",
+          tool: "computer",
+        },
+      });
+    }
+    await settle();
+
+    expect((session as any).activeTasks.size).toBe(0);
+    expect(speech.at(-1)).toContain("safe interaction limit");
+    expect(requests).toContainEqual({
+      method: "turn/interrupt",
+      params: { threadId: "task_thread_1", turnId: "turn_task_thread_1" },
+    });
+  });
+
   test("speaks the completed turn result when Codex omitted its speech tool", async () => {
     const speech: string[] = [];
     const session = new ChatGPTRealtimeAppServerSession({

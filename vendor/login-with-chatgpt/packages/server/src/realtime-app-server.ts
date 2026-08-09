@@ -94,6 +94,12 @@ export interface ChatGPTRealtimeAppServerOptions {
   cwd?: string;
   /** Defaults to read-only. Use workspace-write only for an explicitly scoped cwd. */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  /** Maximum lifetime of an ordinary delegated task. Defaults to five minutes. */
+  taskTimeoutMs?: number;
+  /** Maximum lifetime of a direct computer-control task. Defaults to two minutes. */
+  computerTaskTimeoutMs?: number;
+  /** Maximum lifetime of a media playback task. Defaults to ninety seconds. */
+  mediaTaskTimeoutMs?: number;
   /** Injectable owner clock for deterministic integrations and tests. */
   now?: () => number;
 }
@@ -127,9 +133,14 @@ interface DelegatedTask {
   transcript: string;
   normalizedTranscript: string;
   context?: string;
+  kind: "general" | "computer" | "media";
+  createdAt: number;
   threadId?: string;
   turnId?: string;
   spoke: boolean;
+  completing: boolean;
+  actionCount: number;
+  timeout?: ReturnType<typeof setTimeout>;
 }
 
 interface SearchHandoff {
@@ -141,6 +152,12 @@ interface SearchHandoff {
 const SPEAK_TOOL = "speak_to_user";
 const MAX_PARALLEL_HANDOFFS = 4;
 const HANDOFF_DEDUPE_MS = 30_000;
+const MEDIA_REPLAY_GUARD_MS = 5_000;
+const DEFAULT_TASK_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_COMPUTER_TASK_TIMEOUT_MS = 2 * 60_000;
+const DEFAULT_MEDIA_TASK_TIMEOUT_MS = 90_000;
+const MAX_MEDIA_TASK_ACTIONS = 12;
+const MAX_COMPUTER_TASK_ACTIONS = 20;
 const DEFAULT_EXECUTION_INSTRUCTIONS =
   "You are the execution side of one native realtime voice assistant. Requests arrive inside " +
   "<realtime_delegation>. Use dynamic tools whenever private data or an external action is needed. " +
@@ -184,10 +201,12 @@ export class ChatGPTRealtimeAppServerSession {
   private allowedTools: Set<string>;
   private activeTasks = new Map<string, DelegatedTask>();
   private tasksByThreadId = new Map<string, DelegatedTask>();
+  private completedTaskThreads = new Set<string>();
   private recentHandoffs = new Map<string, number>();
   private recentNativeRedirects = new Map<string, number>();
   private recentSearches = new Map<string, number>();
   private activeSearches = new Map<string, SearchHandoff>();
+  private lastMediaHandoffAt?: number;
   private speechTail: Promise<void> = Promise.resolve();
 
   constructor(options: ChatGPTRealtimeAppServerOptions) {
@@ -393,6 +412,11 @@ export class ChatGPTRealtimeAppServerSession {
         }
       }
     } finally {
+      for (const task of this.activeTasks.values()) {
+        if (task.timeout) clearTimeout(task.timeout);
+      }
+      this.activeTasks.clear();
+      this.tasksByThreadId.clear();
       this.rejectPending(new Error("Codex app-server session closed."));
       try {
         if (this.home) await rm(this.home, { recursive: true, force: true });
@@ -521,11 +545,17 @@ export class ChatGPTRealtimeAppServerSession {
     }
     const context = { callId, name, arguments: args };
     this.emit({ type: "tool.running", callId, name });
+    const requestThreadId = typeof params["threadId"] === "string" ? params["threadId"] : undefined;
+    if (requestThreadId && this.completedTaskThreads.has(requestThreadId)) {
+      this.send({ id, result: dynamicToolResponse({ status: "task_already_finished" }) });
+      this.emit({ type: "tool.completed", callId, name });
+      return;
+    }
     if (name === SPEAK_TOOL) {
       const text = args["text"];
       if (typeof text !== "string" || !text.trim()) throw new Error("speak_to_user requires text.");
       const task = this.taskForRequest(params);
-      if (task?.spoke) {
+      if (task?.spoke || task?.completing) {
         this.send({ id, result: dynamicToolResponse({ status: "already_spoken" }) });
         this.emit({ type: "tool.completed", callId, name });
         return;
@@ -536,8 +566,18 @@ export class ChatGPTRealtimeAppServerSession {
       // versions serialize these messages; awaiting appendSpeech first makes
       // each side wait on the other forever and wedges the Live conversation.
       this.send({ id, result: dynamicToolResponse({ status: "spoken" }) });
-      await this.speak(text);
+      try {
+        await this.speak(text);
+      } catch {
+        this.emit({ type: "error", message: "Codex completed, but its result could not be spoken." });
+      }
       this.emit({ type: "tool.completed", callId, name });
+      if (task) {
+        const threadId = task.threadId;
+        const turnId = task.turnId;
+        this.finalizeTask(task, "completed", false);
+        if (threadId && turnId) void this.interruptTurn(threadId, turnId);
+      }
       return;
     }
     const result = await this.options.executeTool(context);
@@ -575,6 +615,8 @@ export class ChatGPTRealtimeAppServerSession {
       if (task && !task.turnId && typeof turn?.["id"] === "string") {
         task.turnId = turn["id"];
       }
+    } else if (method === "item/started") {
+      this.handleItemStarted(params);
     } else if (method === "turn/completed") {
       void this.handleTurnCompleted(params).catch(() => this.emit({
         type: "error",
@@ -642,6 +684,7 @@ export class ChatGPTRealtimeAppServerSession {
       void this.runSearch(search);
       return;
     }
+    const kind = delegatedTaskKind(transcript);
     if (
       [...this.activeTasks.values()].some((task) => task.normalizedTranscript === normalizedTranscript)
       || this.recentHandoffs.has(normalizedTranscript)
@@ -649,24 +692,44 @@ export class ChatGPTRealtimeAppServerSession {
       this.emit({ type: "handoff.deduplicated", transcript });
       return;
     }
-    this.recentHandoffs.set(normalizedTranscript, now);
-    const task: DelegatedTask = {
-      id: crypto.randomUUID(),
-      transcript,
-      normalizedTranscript,
-      context: handoffContext(item),
-      spoke: false,
-    };
-    this.emit({ type: "handoff", transcript });
-
+    if (
+      kind === "media"
+      && (
+        [...this.activeTasks.values()].some((task) => task.kind === "media")
+        || (
+          this.lastMediaHandoffAt !== undefined
+          && now - this.lastMediaHandoffAt < MEDIA_REPLAY_GUARD_MS
+        )
+      )
+    ) {
+      this.emit({ type: "handoff.deduplicated", transcript });
+      return;
+    }
     if (this.activeTasks.size >= MAX_PARALLEL_HANDOFFS) {
-      this.recentHandoffs.delete(normalizedTranscript);
       void this.speak(
         `Codex is already running ${MAX_PARALLEL_HANDOFFS} tasks. Please try that request again after one finishes.`,
       ).catch(() => this.emit({ type: "error", message: "The Codex capacity notice could not be spoken." }));
       return;
     }
+    this.recentHandoffs.set(normalizedTranscript, now);
+    if (kind === "media") this.lastMediaHandoffAt = now;
+    const task: DelegatedTask = {
+      id: crypto.randomUUID(),
+      transcript,
+      normalizedTranscript,
+      context: handoffContext(item),
+      kind,
+      createdAt: now,
+      spoke: false,
+      completing: false,
+      actionCount: 0,
+    };
+    this.emit({ type: "handoff", transcript });
     this.activeTasks.set(task.id, task);
+    task.timeout = setTimeout(
+      () => void this.timeoutTask(task),
+      this.timeoutForTask(task),
+    );
     this.publishTaskState();
     void this.startDelegatedTask(task);
   }
@@ -739,11 +802,13 @@ export class ChatGPTRealtimeAppServerSession {
 
   private async handleTurnCompleted(params: JsonObject): Promise<void> {
     const task = this.taskForRequest(params);
-    if (!task) return;
+    if (!task || task.completing) return;
     const turn = asRecord(params["turn"]);
     const turnId = typeof turn?.["id"] === "string" ? turn["id"] : undefined;
     if (task.turnId && turnId && task.turnId !== turnId) return;
     if (turnId) task.turnId = turnId;
+    task.completing = true;
+    if (task.timeout) clearTimeout(task.timeout);
     const rawStatus = turn?.["status"];
     const status = rawStatus === "failed" || rawStatus === "interrupted" ? rawStatus : "completed";
     let fallbackSpeech = false;
@@ -757,24 +822,17 @@ export class ChatGPTRealtimeAppServerSession {
         this.emit({ type: "error", message: "Codex finished, but its completion notice could not be spoken." });
       }
     }
-    this.emit({
-      type: "handoff.completed",
-      taskId: task.id,
-      transcript: task.transcript,
-      status,
-      fallbackSpeech,
-      activeCount: Math.max(0, this.activeTasks.size - 1),
-    });
-    this.activeTasks.delete(task.id);
-    if (task.threadId) this.tasksByThreadId.delete(task.threadId);
-    this.publishTaskState();
+    this.finalizeTask(task, status, fallbackSpeech);
   }
 
   private async startDelegatedTask(task: DelegatedTask): Promise<void> {
-    if (!this.startOptions || !this.home) return;
+    const startOptions = this.startOptions;
+    const home = this.home;
     try {
+      if (!startOptions || !home) throw new Error("Realtime execution is not initialized.");
+      if (!this.activeTasks.has(task.id)) return;
       const threadResponse = await this.expectResult("thread/start", {
-        cwd: this.options.cwd ?? this.home,
+        cwd: this.options.cwd ?? home,
         ephemeral: true,
         approvalPolicy: "never",
         sandbox: this.options.sandbox ?? "read-only",
@@ -782,10 +840,11 @@ export class ChatGPTRealtimeAppServerSession {
         baseInstructions: this.options.executionInstructions ?? DEFAULT_EXECUTION_INSTRUCTIONS,
         developerInstructions: this.options.executionInstructions ?? DEFAULT_EXECUTION_INSTRUCTIONS,
         dynamicTools: [...this.options.tools, speakToolSpec()],
-        ...realtimeExecutionConfig(this.startOptions),
+        ...realtimeExecutionConfig(startOptions),
       });
       const thread = asRecord(asRecord(threadResponse["result"])?.["thread"]);
       if (typeof thread?.["id"] !== "string") throw new Error("App-server returned no task thread id.");
+      if (!this.activeTasks.has(task.id)) return;
       task.threadId = thread["id"];
       this.tasksByThreadId.set(task.threadId, task);
 
@@ -795,6 +854,10 @@ export class ChatGPTRealtimeAppServerSession {
       });
       const turn = asRecord(asRecord(turnResponse["result"])?.["turn"]);
       if (typeof turn?.["id"] === "string") task.turnId = turn["id"];
+      if (!this.activeTasks.has(task.id)) {
+        if (task.threadId && task.turnId) void this.interruptTurn(task.threadId, task.turnId);
+        return;
+      }
       this.emit({
         type: "handoff.started",
         taskId: task.id,
@@ -804,20 +867,84 @@ export class ChatGPTRealtimeAppServerSession {
       this.acknowledgeHandoff(task.transcript);
       this.publishTaskState();
     } catch {
-      this.activeTasks.delete(task.id);
-      if (task.threadId) this.tasksByThreadId.delete(task.threadId);
+      if (!this.activeTasks.has(task.id)) return;
       this.recentHandoffs.delete(task.normalizedTranscript);
-      this.emit({
-        type: "handoff.completed",
-        taskId: task.id,
-        transcript: task.transcript,
-        status: "failed",
-        fallbackSpeech: true,
-        activeCount: this.activeTasks.size,
-      });
+      this.finalizeTask(task, "failed", true);
       await this.speak("I couldn’t start that Codex task. Please try again.").catch(() => {});
-      this.publishTaskState();
     }
+  }
+
+  private async timeoutTask(task: DelegatedTask): Promise<void> {
+    const label = task.kind === "media"
+      ? "That media task was taking too long, so I stopped it before it could keep clicking or open duplicates."
+      : "That Codex task was taking too long, so I stopped it. Please try a narrower request.";
+    await this.stopTask(task, label);
+  }
+
+  private handleItemStarted(params: JsonObject): void {
+    const task = this.taskForRequest(params);
+    const item = asRecord(params["item"]);
+    if (!task || task.completing || !isActionItem(item)) return;
+    task.actionCount += 1;
+    const limit = task.kind === "media"
+      ? MAX_MEDIA_TASK_ACTIONS
+      : task.kind === "computer"
+        ? MAX_COMPUTER_TASK_ACTIONS
+        : undefined;
+    if (limit !== undefined && task.actionCount > limit) {
+      void this.stopTask(
+        task,
+        "I stopped that computer task because it exceeded its safe interaction limit without finishing.",
+      );
+    }
+  }
+
+  private async stopTask(task: DelegatedTask, speech: string): Promise<void> {
+    if (!this.activeTasks.has(task.id) || task.completing) return;
+    task.spoke = true;
+    task.completing = true;
+    const threadId = task.threadId;
+    const turnId = task.turnId;
+    this.finalizeTask(task, "interrupted", true);
+    if (threadId && turnId) void this.interruptTurn(threadId, turnId);
+    await this.speak(speech).catch(() => {});
+  }
+
+  private finalizeTask(
+    task: DelegatedTask,
+    status: "completed" | "failed" | "interrupted",
+    fallbackSpeech: boolean,
+  ): void {
+    if (!this.activeTasks.has(task.id)) return;
+    if (task.timeout) clearTimeout(task.timeout);
+    this.activeTasks.delete(task.id);
+    if (task.threadId) {
+      this.tasksByThreadId.delete(task.threadId);
+      this.completedTaskThreads.add(task.threadId);
+    }
+    this.emit({
+      type: "handoff.completed",
+      taskId: task.id,
+      transcript: task.transcript,
+      status,
+      fallbackSpeech,
+      activeCount: this.activeTasks.size,
+    });
+    this.publishTaskState();
+  }
+
+  private timeoutForTask(task: DelegatedTask): number {
+    if (task.kind === "media") {
+      return this.options.mediaTaskTimeoutMs ?? DEFAULT_MEDIA_TASK_TIMEOUT_MS;
+    }
+    if (task.kind === "computer") {
+      return this.options.computerTaskTimeoutMs ?? DEFAULT_COMPUTER_TASK_TIMEOUT_MS;
+    }
+    return this.options.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+  }
+
+  private async interruptTurn(threadId: string, turnId: string): Promise<void> {
+    await this.expectResult("turn/interrupt", { threadId, turnId }, 5_000).catch(() => {});
   }
 
   private publishTaskState(): void {
@@ -942,6 +1069,26 @@ function normalizeTranscript(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function delegatedTaskKind(value: string): DelegatedTask["kind"] {
+  const normalized = normalizeTranscript(value);
+  const mediaAction = /\b(play|stream|listen|watch|put on)\b/.test(normalized);
+  const mediaTarget = /\b(song|music|album|playlist|video|trailer|youtube|spotify|soundcloud)\b/.test(normalized);
+  if ((mediaAction || /\bqueue\b/.test(normalized)) && mediaTarget) return "media";
+  if (/\b(browser|tab|window|helium|chrome|safari|open|launch|quit|click|select|scroll)\b/.test(normalized)) {
+    return "computer";
+  }
+  return "general";
+}
+
+function isActionItem(item: JsonObject | undefined): boolean {
+  return item?.["type"] === "commandExecution"
+    || item?.["type"] === "fileChange"
+    || item?.["type"] === "mcpToolCall"
+    || item?.["type"] === "dynamicToolCall"
+    || item?.["type"] === "webSearch"
+    || item?.["type"] === "collabAgentToolCall";
+}
+
 function stripWakeWord(value: string): string {
   return value.replace(/^\s*juniper\s*[,;:.-]?\s*/i, "").trim();
 }
@@ -979,11 +1126,25 @@ function delegationPrompt(task: DelegatedTask): string {
   const context = task.context
     ? `\n  <immediate_context>${escapeXml(task.context)}</immediate_context>`
     : "";
+  const taskContract = task.kind === "media"
+    ? "\nMedia playback contract:\n" +
+      "- Reuse an existing relevant browser tab or window whenever possible. Open at most one new tab and one media stream.\n" +
+      "- Inspect the current page before clicking. If the requested media is already open or playing, focus it and finish.\n" +
+      "- Choose one best matching result. Never open multiple candidates, duplicate a tab, or start a second playback stream.\n" +
+      "- Once the requested media begins playing, stop browsing immediately, call speak_to_user, and take no further actions.\n" +
+      "- Do not wait for the media to finish. If playback cannot be confirmed quickly, stop and report that instead of exploring."
+    : task.kind === "computer"
+      ? "\nComputer-control contract:\n" +
+        "- Use the shortest deterministic path and reuse existing windows or tabs.\n" +
+        "- Do not explore unrelated UI, repeat a successful action, or keep clicking after the requested state is visible.\n" +
+        "- Verify the final state once, call speak_to_user, and stop immediately."
+      : "\nDo not use computer control unless the request explicitly requires it. Finish the scoped task, call speak_to_user, and stop.";
   return (
-    `<realtime_delegation parallel="true">\n  <input>${escapeXml(task.transcript)}</input>${context}\n` +
+    `<realtime_delegation parallel="true" kind="${task.kind}">\n  <input>${escapeXml(task.transcript)}</input>${context}\n` +
     "</realtime_delegation>\n" +
     "This request has its own isolated Codex thread. Complete only this request. Other voice tasks may run " +
-    "in parallel, so do not replay, merge, wait for, or report on them."
+    "in parallel, so do not replay, merge, wait for, or report on them." +
+    taskContract
   );
 }
 

@@ -47,6 +47,11 @@ Codex tasks run in isolated threads, up to four in parallel. GPT Live should
 acknowledge every handoff promptly and announce each completion. Search must
 remain available while Codex tasks run.
 
+Media playback is single-flight. It may reuse or open one browser tab and start
+one stream. Completion speech terminates the turn. Expect media tasks to stop at
+12 actions or 90 seconds, direct computer tasks at 20 actions or two minutes,
+and ordinary delegated tasks at five minutes.
+
 ## Audio and wake checks
 
 - Require the configured wake name for every new request, including barge-in.

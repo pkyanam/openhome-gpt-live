@@ -145,6 +145,15 @@ task, correlates its tools and completion by thread id, and guarantees a fallbac
 completion announcement. Confirm `codex --version` and `codex login status`
 work for the same host user, then inspect `data/server-error.log`.
 
+## A media request opens duplicate tabs or Codex keeps clicking
+
+Upgrade to 0.3.5 or newer. Media playback is single-flight and allows one
+reused or newly opened tab, one selected result, and one playback stream. The
+bridge ends the task when Codex speaks its completion, or interrupts it after
+12 actions or 90 seconds. Direct computer-control tasks have a 20-action and
+two-minute limit. Do not test by sending the same wake request repeatedly while
+the first acknowledgement is still playing.
+
 ## The date or time is stale
 
 Version 0.3.1 and newer uses the app-server's live `currentTime/read` provider.
