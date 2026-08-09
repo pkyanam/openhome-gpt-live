@@ -124,6 +124,19 @@ After upgrading, update the same Ability object in place, tap **Sync Abilities**
 and **Restart Agent**. On `/setup`, a successful request should show **Last
 routed request: OpenAI web search** while Codex remains idle.
 
+## A Spotify command starts Codex
+
+The sister Ability is optional. Confirm its host reports ready, then set both
+`OPENHOME_SPOTIFY_URL` and `OPENHOME_SPOTIFY_TOOL_TOKEN` in GPT Live's host
+environment and restart only after an owner-approved maintenance window. Never
+copy Spotify OAuth tokens into GPT Live. `/setup` should report the last routed
+request as **OpenHome Spotify** while Codex remains idle.
+
+The GPT Live audio guard exempts only Chromium streams with the exact PulseAudio
+property `application.id=com.openhome.spotify`. Unmarked Chromium remains under
+the existing mute watchdog. Use the sister project's audio diagnostics to
+confirm the marker instead of disabling the guard globally.
+
 ## The first wake request is silent but repeating it works
 
 Upgrade the Ability to **0.3.9 or newer**. Version 0.3.8 shortened the retained

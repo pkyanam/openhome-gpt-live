@@ -183,6 +183,7 @@ restores those streams.
 | --- | --- |
 | Conversation, explanations, date/time | GPT Live |
 | Current facts, news, weather, web searches | OpenAI web search |
+| Routine music/podcast playback, when separately configured | OpenHome Spotify |
 | Files, code, projects, OpenHome actions, computer and media-app control | Codex |
 
 Search and Codex work run independently. Each Codex request starts immediately
@@ -198,9 +199,17 @@ bounded action counts and hard deadlines.
 Each physical wake opens one routing transaction. Its first handoff has one
 owner, so a Codex task cannot later become a search or another Codex task even
 if GPT Live rephrases it. Repeated fallback handoffs stay silent, and the
-configured wake name is removed before routing. Commands such as “play a song on YouTube,” “control
-Spotify,” or “pause Apple Music” always use the media lane rather than the web
-search fallback.
+configured wake name is removed before routing. Commands such as “play a song
+on YouTube” or “pause Apple Music” always use the media lane rather than the web
+search fallback. Open-ended Spotify computer control remains in that lane too.
+
+An optional compatibility lane is available for the independent
+`openhome-spotify` project. Set `OPENHOME_SPOTIFY_URL` and
+`OPENHOME_SPOTIFY_TOOL_TOKEN` together to route supported play, pause, resume,
+search, queue, skip, seek, volume, device, and now-playing requests directly to
+that Ability. With neither setting, GPT Live retains its existing behavior;
+Spotify is never required. OAuth tokens and playback sessions remain owned by
+the sister service and are not copied into GPT Live.
 
 ## Voices, wake names, and access
 

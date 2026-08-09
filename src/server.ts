@@ -15,6 +15,7 @@ import { parseOpenAISearchEvents } from "./openai-search.ts";
 import { classifyCodexTask, isMediaControlRequest } from "./handoff-routing.ts";
 import { routeVoiceRequest } from "./voice-routing.ts";
 import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
+import { OpenHomeSpotifyClient } from "./openhome-spotify-client.ts";
 
 const LIVE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const host = process.env.HOST?.trim() || "127.0.0.1";
@@ -47,6 +48,10 @@ const toolPolicy = createOpenHomeToolPolicy(openHome);
 const codexControl = createCodexControlPolicy({
   enabled: confirmedMacControl,
   workspace: codexWorkspace,
+});
+const spotify = new OpenHomeSpotifyClient({
+  baseUrl: process.env.OPENHOME_SPOTIFY_URL,
+  token: process.env.OPENHOME_SPOTIFY_TOOL_TOKEN,
 });
 
 if (!lwcSecret || lwcSecret.length < 32) {
@@ -106,8 +111,15 @@ auth = createChatGPTHandler({
       searchAcknowledgement:
         "I’m searching OpenAI now. You can keep talking while I check.",
       executeSearch: ({ request, transcript }) => executeSubscriptionSearch(request, transcript),
+      ...(spotify.configured
+        ? {
+            spotifyAcknowledgement: "Starting that on Spotify now.",
+            executeSpotify: ({ transcript, requestId }: { transcript: string; requestId: string }) =>
+              spotify.executeVoice(transcript, requestId),
+          }
+        : {}),
       routeHandoff: (transcript) => {
-        const destination = routeVoiceRequest(transcript);
+        const destination = routeVoiceRequest(transcript, spotify.configured);
         console.log(`GPT Live routed a request to ${destination}.`);
         return destination;
       },
@@ -116,7 +128,8 @@ auth = createChatGPTHandler({
         "You are the execution side of an OpenHome realtime voice assistant. " +
         "Native GPT Live owns ordinary conversation, memory, and general knowledge. The OpenHome bridge intercepts " +
         "web-search handoffs and runs them through OpenAI, so Codex should receive only local computer, workspace, " +
-        "and OpenHome action requests. Process only the current delegated request and do not " +
+        "and OpenHome action requests. Routine Spotify playback is owned by the separate deterministic Ability and " +
+        "must never reach Codex when that Ability is configured. Process only the current delegated request and do not " +
         "replay, reorder, or answer earlier conversation turns. Complete delegated tasks directly rather than " +
         "merely describing how the user could do them. " +
         "Each delegated request runs in its own isolated Codex thread. Other requests may run concurrently. " +
@@ -151,6 +164,10 @@ auth = createChatGPTHandler({
         "'one two fifty'. Hand off requests that require OpenHome account data, an OpenHome action, creating or " +
         "changing files in the " +
         "configured local workspace, or controlling the paired Mac through Codex. " +
+        (spotify.configured
+          ? "Hand off routine play, search, pause, resume, queue, skip, seek, volume, device, and now-playing requests; " +
+            "the bridge routes them to the separate Spotify Ability without Codex. "
+          : "") +
         (fullCodexAccess
           ? "Mac control is owner-authorized for direct delegated execution without browser confirmation. "
           : "Outside-workspace Mac control must use the confirmed Codex Mac tool. ") +

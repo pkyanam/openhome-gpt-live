@@ -104,17 +104,23 @@ describe("DeviceRegistry", () => {
       taskId: "search-1",
       transcript: "private search request",
     });
+    await registry.observeBridgeEvent(registration.record.id, {
+      type: "spotify.started",
+      taskId: "spotify-1",
+      transcript: "private spotify request",
+    });
 
     const record = await store.get(registration.record.id);
     expect(record).toMatchObject({
       codexState: "working",
       codexActiveTasks: 1,
       lastCodexTaskStatus: "completed",
-      lastVoiceRoute: "openai_search",
+      lastVoiceRoute: "spotify",
     });
     expect(JSON.stringify(record)).not.toContain("private spoken request");
     expect(JSON.stringify(record)).not.toContain("private native search");
     expect(JSON.stringify(record)).not.toContain("private search request");
+    expect(JSON.stringify(record)).not.toContain("private spotify request");
   });
 });
 

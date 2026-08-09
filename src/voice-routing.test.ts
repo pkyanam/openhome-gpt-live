@@ -19,6 +19,17 @@ describe("speaker voice routing", () => {
     expect(routeVoiceRequest("play today's top hits on Spotify")).toBe("codex");
   });
 
+  test("uses Spotify only when the separate Ability is configured", () => {
+    expect(routeVoiceRequest("Lara, play Dreams by Fleetwood Mac", true)).toBe("spotify");
+    expect(routeVoiceRequest("pause", true)).toBe("spotify");
+    expect(routeVoiceRequest("queue Go Your Own Way", true)).toBe("spotify");
+    expect(routeVoiceRequest("set Spotify volume to 20 percent", true)).toBe("spotify");
+    expect(routeVoiceRequest("what's playing", true)).toBe("spotify");
+    expect(routeVoiceRequest("play a song on YouTube", true)).toBe("codex");
+    expect(routeVoiceRequest("control Spotify", true)).toBe("codex");
+    expect(routeVoiceRequest("play Dreams by Fleetwood Mac")).toBe("codex");
+  });
+
   test("keeps conversation and clock questions in GPT Live", () => {
     expect(routeVoiceRequest("explain photosynthesis in five sentences")).toBe("native");
     expect(routeVoiceRequest("what is the exact date and time right now")).toBe("native");

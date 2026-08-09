@@ -17,6 +17,8 @@ export type ChatGPTRealtimeAppServerEvent =
   | { type: "handoff.redirected"; transcript: string; destination: "native" }
   | { type: "search.started"; taskId: string; transcript: string }
   | { type: "search.completed"; taskId: string; transcript: string; status: "completed" | "failed" }
+  | { type: "spotify.started"; taskId: string; transcript: string }
+  | { type: "spotify.completed"; taskId: string; transcript: string; status: "completed" | "failed" }
   | {
       type: "handoff.completed";
       taskId: string;
@@ -238,10 +240,12 @@ export function parseChatGPTRealtimeAppServerEvent(
         ? value as ChatGPTRealtimeAppServerEvent
         : undefined;
     case "search.started":
+    case "spotify.started":
       return typeof value["taskId"] === "string" && typeof value["transcript"] === "string"
         ? value as ChatGPTRealtimeAppServerEvent
         : undefined;
     case "search.completed":
+    case "spotify.completed":
       return typeof value["taskId"] === "string"
         && typeof value["transcript"] === "string"
         && (value["status"] === "completed" || value["status"] === "failed")

@@ -44,6 +44,11 @@ export interface RealtimeAppServerSearchContext {
   transcript: string;
 }
 
+export interface RealtimeAppServerSpotifyContext extends RealtimeAppServerSearchContext {
+  /** Stable request id shared with openhome-spotify for idempotency. */
+  requestId: string;
+}
+
 /** Minimal process/session contract required by the HTTP lifecycle manager. */
 export interface RealtimeAppServerSessionHandle {
   readonly id: string;
@@ -85,8 +90,12 @@ export interface RealtimeAppServerPolicy {
   executeSearch?: (context: RealtimeAppServerSearchContext) => Promise<string>;
   /** Spoken after the OpenAI search lane accepts a handoff. */
   searchAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Runs routine playback commands through the separately configured Spotify Ability. */
+  executeSpotify?: (context: RealtimeAppServerSpotifyContext) => Promise<string>;
+  /** Spoken before the Spotify Ability begins the action. */
+  spotifyAcknowledgement?: string | ((transcript: string) => string | undefined);
   /** Routes requests away from the automatic Codex turn when appropriate. */
-  routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search";
+  routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search" | "spotify";
   /** Classifies accepted Codex work for task-specific execution limits. */
   classifyHandoff?: (transcript: string) => "general" | "computer" | "media";
   /** Directory exposed to the delegated Codex thread. */
@@ -246,6 +255,20 @@ export function createRealtimeAppServerRoutes(options: {
           : {}),
         ...(policy.searchAcknowledgement
           ? { searchAcknowledgement: policy.searchAcknowledgement }
+          : {}),
+        ...(policy.executeSpotify
+          ? {
+              executeSpotify: (transcript, requestId) => policy.executeSpotify!({
+                loginSessionId: ownerSessionId,
+                liveSessionId,
+                request: requestSnapshot,
+                transcript,
+                requestId,
+              }),
+            }
+          : {}),
+        ...(policy.spotifyAcknowledgement
+          ? { spotifyAcknowledgement: policy.spotifyAcknowledgement }
           : {}),
         ...(policy.routeHandoff ? { routeHandoff: policy.routeHandoff } : {}),
         ...(policy.classifyHandoff ? { classifyHandoff: policy.classifyHandoff } : {}),

@@ -49,6 +49,13 @@ export type RealtimeBridgeEvent =
     transcript: string;
     status: "completed" | "failed";
   }
+  | { type: "spotify.started"; taskId: string; transcript: string }
+  | {
+    type: "spotify.completed";
+    taskId: string;
+    transcript: string;
+    status: "completed" | "failed";
+  }
   | {
     type: "handoff.completed";
     taskId: string;
@@ -85,12 +92,16 @@ export interface ChatGPTRealtimeAppServerOptions {
   executeSearch?: (transcript: string) => Promise<string>;
   /** Spoken immediately after the OpenAI search lane accepts a handoff. */
   searchAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Runs a routine media command through the separate OpenHome Spotify Ability. */
+  executeSpotify?: (transcript: string, requestId: string) => Promise<string>;
+  /** Spoken before the Spotify Ability begins resolving or mutating playback. */
+  spotifyAcknowledgement?: string | ((transcript: string) => string | undefined);
   /**
    * Routes an incoming native handoff. Returning `native` retries the request
-   * in GPT Live; `openai_search` runs `executeSearch` independently. Codex
-   * requests start in isolated execution threads.
+   * in GPT Live; `openai_search` and `spotify` run their deterministic service
+   * lanes independently. Codex requests start in isolated execution threads.
    */
-  routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search";
+  routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search" | "spotify";
   /** Classifies an accepted Codex handoff for its execution contract and safety limits. */
   classifyHandoff?: (transcript: string) => "general" | "computer" | "media";
   cwd?: string;
@@ -148,6 +159,12 @@ interface DelegatedTask {
 }
 
 interface SearchHandoff {
+  id: string;
+  transcript: string;
+  normalizedTranscript: string;
+}
+
+interface SpotifyHandoff {
   id: string;
   transcript: string;
   normalizedTranscript: string;
@@ -211,6 +228,8 @@ export class ChatGPTRealtimeAppServerSession {
   private recentNativeRedirects = new Map<string, number>();
   private recentSearches = new Map<string, number>();
   private activeSearches = new Map<string, SearchHandoff>();
+  private recentSpotifyRequests = new Map<string, number>();
+  private activeSpotifyRequests = new Map<string, SpotifyHandoff>();
   private lastNativeRedirectAt?: number;
   private lastMediaHandoffAt?: number;
   private currentVoiceTurnId?: string;
@@ -682,6 +701,9 @@ export class ChatGPTRealtimeAppServerSession {
     for (const [key, seenAt] of this.recentSearches) {
       if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentSearches.delete(key);
     }
+    for (const [key, seenAt] of this.recentSpotifyRequests) {
+      if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentSpotifyRequests.delete(key);
+    }
     const destination = this.options.routeHandoff?.(transcript) ?? "codex";
     if (destination === "native") {
       const redirectKey = nativeRedirectKey(transcript);
@@ -727,6 +749,30 @@ export class ChatGPTRealtimeAppServerSession {
       this.emit({ type: "search.started", taskId: search.id, transcript });
       this.acknowledgeSearch(transcript);
       void this.runSearch(search);
+      return;
+    }
+    if (destination === "spotify") {
+      if (!this.options.executeSpotify) {
+        void this.speak("Spotify is not configured for this speaker.").catch(() => {});
+        this.emit({ type: "error", message: "The Spotify Ability is not configured." });
+        return;
+      }
+      if (
+        this.activeSpotifyRequests.has(normalizedTranscript)
+        || this.recentSpotifyRequests.has(normalizedTranscript)
+      ) {
+        this.emit({ type: "handoff.deduplicated", transcript });
+        return;
+      }
+      this.recentSpotifyRequests.set(normalizedTranscript, now);
+      const spotify: SpotifyHandoff = {
+        id: crypto.randomUUID(),
+        transcript,
+        normalizedTranscript,
+      };
+      this.activeSpotifyRequests.set(normalizedTranscript, spotify);
+      this.emit({ type: "spotify.started", taskId: spotify.id, transcript });
+      void this.runSpotify(spotify);
       return;
     }
     const kind = this.options.classifyHandoff?.(transcript) ?? delegatedTaskKind(transcript);
@@ -828,6 +874,31 @@ export class ChatGPTRealtimeAppServerSession {
         type: "search.completed",
         taskId: search.id,
         transcript: search.transcript,
+        status,
+      });
+    }
+  }
+
+  private async runSpotify(spotify: SpotifyHandoff): Promise<void> {
+    let status: "completed" | "failed" = "completed";
+    try {
+      const configured = this.options.spotifyAcknowledgement;
+      const acknowledgement = typeof configured === "function"
+        ? configured(spotify.transcript)
+        : configured ?? "Starting that on Spotify now.";
+      if (acknowledgement?.trim()) await this.speak(acknowledgement);
+      const result = await this.options.executeSpotify!(spotify.transcript, spotify.id);
+      if (!result.trim()) throw new Error("The Spotify Ability returned no result.");
+      await this.speak(result);
+    } catch {
+      status = "failed";
+      await this.speak("I couldn’t complete that Spotify request. Please try again.").catch(() => {});
+    } finally {
+      this.activeSpotifyRequests.delete(spotify.normalizedTranscript);
+      this.emit({
+        type: "spotify.completed",
+        taskId: spotify.id,
+        transcript: spotify.transcript,
         status,
       });
     }

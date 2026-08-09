@@ -90,8 +90,12 @@ The host classifies every native handoff before Codex accepts it:
 - File, workspace, application, OpenHome, external-action, and explicit “use
   Codex” requests enter the delegated Codex lane. A local action wins when a
   request contains both research and a mutation.
-- YouTube, Spotify, Apple Music, songs, playlists, and playback controls enter
-  the single-flight media lane before native or search fallback.
+- When the independent `openhome-spotify` service is configured, its supported
+  routine music and podcast commands enter a deterministic Spotify lane. The
+  Ability owns OAuth, resolution, idempotency, and single-flight playback.
+- Other media-app commands enter the Codex single-flight media lane before
+  native or search fallback. Without Spotify configuration, routing is
+  unchanged from the standalone GPT Live release.
 
 The DevKit's server-owned wake phrase is removed before this classification.
 Each physical wake receives a unique server transaction id. The first handoff

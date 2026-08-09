@@ -320,6 +320,51 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
   });
 
+  test("routes routine Spotify handoffs without starting Codex and shares the idempotency id", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const executed: Array<{ transcript: string; requestId: string; speechCount: number }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: () => "spotify",
+      spotifyAcknowledgement: "Starting that on Spotify now.",
+      executeSpotify: async (transcript, requestId) => {
+        executed.push({ transcript, requestId, speechCount: speech.length });
+        return "Dreams by Fleetwood Mac is playing.";
+      },
+      now: () => 1_000,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play Dreams by Fleetwood Mac." },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play Dreams by Fleetwood Mac." },
+    });
+    await settle();
+
+    const started = events.find((event) => event.type === "spotify.started");
+    expect(started?.type).toBe("spotify.started");
+    expect(executed).toEqual([{
+      transcript: "Play Dreams by Fleetwood Mac.",
+      requestId: started?.type === "spotify.started" ? started.taskId : "",
+      speechCount: 1,
+    }]);
+    expect(speech).toEqual([
+      "Starting that on Spotify now.",
+      "Dreams by Fleetwood Mac is playing.",
+    ]);
+    expect(events.some((event) => event.type === "spotify.completed" && event.status === "completed")).toBe(true);
+    expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
+    expect(requests).toEqual([]);
+  });
+
   test("allows exactly one backend route for each physical wake transaction", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const searched: string[] = [];

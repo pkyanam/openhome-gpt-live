@@ -360,7 +360,10 @@ def _is_default_agent_audio_stream(stream):
     properties = stream.get("properties")
     if not isinstance(properties, dict):
         return False
-    return properties.get("application.process.binary") == "chromium"
+    return (
+        properties.get("application.process.binary") == "chromium"
+        and properties.get("application.id") != "com.openhome.spotify"
+    )
 
 
 async def _run_reconnecting_worker(client, config, stop_event):
@@ -1042,10 +1045,12 @@ async def _consume_bridge_events(
             except json.JSONDecodeError:
                 continue
             event_type = event.get("type")
-            if event_type in ("handoff.started", "search.started"):
+            if event_type in ("handoff.started", "search.started", "spotify.started"):
                 if callable(on_background_work_started):
                     on_background_work_started(
-                        "Codex" if event_type == "handoff.started" else "search"
+                        "Codex" if event_type == "handoff.started"
+                        else "Spotify" if event_type == "spotify.started"
+                        else "search"
                     )
             elif event_type == "tool.pending_confirmation":
                 _write_status(

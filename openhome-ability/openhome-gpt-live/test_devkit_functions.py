@@ -52,6 +52,7 @@ class DevKitProtocolTests(unittest.TestCase):
             async def aiter_lines(self):
                 yield json.dumps({"type": "handoff.started"})
                 yield json.dumps({"type": "search.started"})
+                yield json.dumps({"type": "spotify.started"})
 
             async def __aenter__(self):
                 return self
@@ -72,7 +73,7 @@ class DevKitProtocolTests(unittest.TestCase):
             accepted.append,
         ))
 
-        self.assertEqual(accepted, ["Codex", "search"])
+        self.assertEqual(accepted, ["Codex", "search", "Spotify"])
 
     def test_decodes_direct_and_nested_realtime_events(self):
         event = {"type": "state_update", "payload": {"new_state": "speaking"}}
@@ -347,6 +348,20 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertTrue(live._is_default_agent_audio_stream({
             "properties": {
                 "application.name": "Chromium input",
+                "application.process.binary": "chromium",
+            },
+        }))
+        self.assertFalse(live._is_default_agent_audio_stream({
+            "properties": {
+                "application.name": "OpenHome Spotify",
+                "application.id": "com.openhome.spotify",
+                "application.process.binary": "chromium",
+            },
+        }))
+        self.assertTrue(live._is_default_agent_audio_stream({
+            "properties": {
+                "application.name": "Unmarked Chromium",
+                "application.id": "com.example.other",
                 "application.process.binary": "chromium",
             },
         }))

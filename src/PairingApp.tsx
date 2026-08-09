@@ -28,7 +28,7 @@ interface PairedSession {
   codexActiveTasks?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
-  lastVoiceRoute?: "native" | "openai_search" | "codex";
+  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "codex";
   lastVoiceRouteAt?: number;
   pendingConfirmations: PendingConfirmation[];
   lastError?: string;
@@ -388,6 +388,8 @@ export function PairingApp() {
                       ? "GPT Live"
                       : session.lastVoiceRoute === "openai_search"
                         ? "OpenAI web search"
+                        : session.lastVoiceRoute === "spotify"
+                          ? "OpenHome Spotify"
                         : "Codex"}</dd>
                   </div>
                 )}
