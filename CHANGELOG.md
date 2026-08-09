@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.10 - 2026-08-09
+
+- Tighten one-word custom wake names to a substantially stricter PocketSphinx
+  likelihood threshold while retaining first-attempt recognition on the
+  physically tested Lara wake name.
+- Require sustained near-end energy above the measured DevKit echo floor before
+  a wake-name detection can interrupt assistant playback.
+- Open a replacement backend turn only after the local barge-in gate actually
+  accepts the interruption. Rejected echo detections now remain silent instead
+  of recursively waking GPT Live.
+- Add candidate RMS diagnostics without storing microphone audio or transcripts,
+  plus regression coverage for the measured speaker-echo failure mode.
+
 ## 0.3.9 - 2026-08-09
 
 - Preserve a 500 ms wake boundary so a combined `Lara, <prompt>` utterance is

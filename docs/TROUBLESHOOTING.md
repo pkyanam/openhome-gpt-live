@@ -157,11 +157,14 @@ Ordinary room audio could be forced into that only legal result and falsely
 confirm Lara. This can produce both unanswered reconnect loops and actual GPT
 Live responses to background audio.
 
-Upgrade to 0.3.9 or newer. The detector now uses PocketSphinx keyphrase spotting
-with a strict likelihood-ratio threshold. A second safety layer pauses Live for
-30 minutes if six accepted detections occur inside two minutes, preventing an
-unattended response loop even if the acoustic detector regresses. New worker
-logs include timestamps and never include microphone audio or transcripts.
+Upgrade to 0.3.10 or newer. The detector now uses PocketSphinx keyphrase
+spotting, with a substantially stricter likelihood-ratio threshold for
+false-prone one-word names. Assistant playback cannot open a replacement turn
+unless the barge-in gate also proves sustained near-end speech above the
+measured DevKit echo floor. A second safety layer pauses Live for 30 minutes if
+six accepted detections occur inside two minutes. Worker logs include
+timestamps and candidate RMS only; they never include microphone audio or
+transcripts.
 
 If a request receives no answer, wait roughly twenty seconds for `/setup` to
 return to `live`, then say the wake name and request once more. A persistent
