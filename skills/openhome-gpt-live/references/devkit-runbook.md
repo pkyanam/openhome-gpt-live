@@ -2,9 +2,9 @@
 
 ## Supported topology
 
-- Official OpenHome DevKit; firmware 1.0.8 is physically tested.
+- Official OpenHome DevKit; firmware 1.0.8 and 1.1.1 are physically tested.
 - A macOS or Linux host runs the HTTPS bridge and Codex tools.
-- The DevKit runs the Local Ability, offline Juniper wake gate, WebRTC audio,
+- The DevKit runs the Local Ability, configurable offline wake gate, WebRTC audio,
   and acoustic echo cancellation.
 
 ## Ability lifecycle
@@ -15,8 +15,9 @@
   at ZIP root).
 - With `OPENHOME_API_KEY`, use `bun run upload:ability` to preserve the Ability
   id and linked Third Party Keys.
-- Firmware 1.0.8 upgrade: run `bun run ability:prepare-sync`, reconnect the
-  dashboard, Sync Abilities, and restart the Agent.
+- Run `bun run ability:prepare-sync` after an Ability upload. Firmware 1.1.1
+  uses its device-native capability sync and restarts the provider
+  automatically; firmware 1.0.8 asks for dashboard Sync and Agent restart.
 - If the background provider did not start, send `gpt live diagnostics` once in
   Activity. It is a firmware bootstrap, not a normal voice launch phrase.
 
@@ -47,9 +48,9 @@ and announce completion. Search must remain available while Codex is busy.
 
 ## Audio and wake checks
 
-- Require “Juniper” for every new request, including barge-in.
+- Require the configured wake name for every new request, including barge-in.
 - Keep the same Live session so context survives between gated turns.
-- If speaker playback re-triggers Juniper, stop the worker; this is a safety
+- If speaker playback re-triggers the wake gate, stop the worker; this is a safety
   failure, not harmless transcription noise.
 - After audio changes, test one short wake request, wait for re-arm, then speak
-  a question without Juniper and confirm the activation count does not change.
+  a question without the wake name and confirm the activation count does not change.

@@ -70,24 +70,19 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     });
   });
 
-  test("builds authoritative owner-local clock context for native Live", () => {
-    expect(realtimeClockContext(
+  test("builds non-stale owner-local clock policy for native Live", () => {
+    const context = realtimeClockContext(
       { timezone: "America/New_York", timezoneOffsetMinutes: 240 },
       new Date("2026-08-08T17:23:45.000Z"),
-    )).toContain(
-      "Saturday, August 8, 2026 at 1:23:45 PM EDT",
     );
-    expect(realtimeClockContext(
-      { timezone: "America/New_York", timezoneOffsetMinutes: 240 },
-      new Date("2026-08-08T16:50:00.000Z"),
-    )).toContain("Speech-ready local time: twelve fifty P.M. Eastern Daylight Time");
-    expect(realtimeClockContext(
-      { timezone: "America/New_York", timezoneOffsetMinutes: 240 },
-      new Date("2026-08-08T17:23:45.000Z"),
-    )).toContain("Never hand these questions to Codex");
+    expect(context).toContain("Authoritative owner IANA timezone: America/New_York");
+    expect(context).toContain("live currentTime/read provider");
+    expect(context).toContain("Never hand these questions to Codex");
+    expect(context).not.toContain("2026-08-08");
+    expect(context).not.toContain("1:23");
   });
 
-  test("refreshes native Live clock context as a developer item", async () => {
+  test("legacy clock refresh cannot append a response-producing developer item", async () => {
     const session = new ChatGPTRealtimeAppServerSession({
       tokens: { accessToken: "access", accountId: "acct_123" },
       tools: [],
@@ -107,9 +102,7 @@ describe("ChatGPTRealtimeAppServerSession", () => {
 
     await session.refreshClock();
 
-    expect(request?.method).toBe("thread/realtime/appendText");
-    expect(request?.params).toMatchObject({ threadId: "thread_1", role: "developer" });
-    expect(String(request?.params["text"])).toContain("captured live by the Mac bridge");
+    expect(request).toBeUndefined();
   });
 
   test("answers app-server current-time requests from the live owner clock", async () => {

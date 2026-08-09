@@ -1,7 +1,8 @@
 # OpenHome GPT Live
 
 Turn an OpenHome DevKit into a wake-word GPT Live speaker with OpenAI web
-search and optional local Codex tools. Say **“Juniper, …”** before every request.
+search and optional local Codex tools. Start every request with your chosen
+wake name—**“Juniper, …”** by default.
 
 [Explore the project site](https://pkyanam.github.io/openhome-gpt-live/) ·
 [Troubleshooting](docs/TROUBLESHOOTING.md) ·
@@ -63,8 +64,8 @@ That replaces the former page-long agent prompt. After cloning, Codex can load
 
 ## What you need
 
-- An onboarded OpenHome DevKit with Local Abilities. Firmware **1.0.8 is
-  physically tested**; 1.1.0 is not required.
+- An onboarded OpenHome DevKit with Local Abilities. Firmware **1.0.8 and
+  1.1.1 are physically tested**.
 - A ChatGPT subscription with GPT Live access.
 - A macOS or Linux host that stays online.
 - A stable public HTTPS origin before production use.
@@ -90,22 +91,32 @@ cd ~/.openhome-gpt-live
 bun run finish
 ```
 
-This prints the exact two OpenHome Third Party Keys and walks through the only
+This prints the exact two required OpenHome Third Party Keys plus the optional
+initial wake-name key, and walks through the only
 steps the host cannot perform for you:
 
 1. Link the printed server URL and bootstrap token to **OpenHome GPT Live**.
 2. Install and enable the Local Ability. Without API automation, upload
    `dist/openhome-gpt-live-ability.zip`.
-3. Tap **Sync Abilities**, restart the Agent, and send `gpt live diagnostics`
-   once in Activity to bootstrap firmware 1.0.8.
+3. Run `bun run ability:prepare-sync` after installation. Firmware 1.1.1 then
+   synchronizes and restarts GPT Live automatically. Firmware 1.0.8 asks you to
+   tap **Sync Abilities**, restart the Agent, and send `gpt live diagnostics`
+   once in Activity.
 4. Press Enter in the wizard. It retrieves the DevKit pairing code from the
    host—speaker audio and raw log inspection are not required.
 5. Open the printed `/setup` link in any trusted browser and complete Login with
-   ChatGPT device-code authorization.
+   ChatGPT device-code authorization. Choose the speaking voice and wake name
+   on that same page.
 
 The browser is a setup/control surface served by this bridge. It can be on the
 host, another computer, a phone, or a tablet; it is **not** embedded in the
 OpenHome mobile app, and speaker audio never passes through it.
+
+Pairing is per browser profile because the setup session uses a signed,
+HttpOnly cookie. ChatGPT and DevKit credentials remain server-side. From any
+already paired `/setup` page, choose **Pair another browser** to create a
+15-minute code for a phone, tablet, or second computer; existing browsers stay
+paired.
 
 ## Installer examples
 
@@ -129,6 +140,7 @@ Agent or unattended host preparation:
   --tunnel existing \
   --public-url https://voice.example.com \
   --email user@example.com \
+  --wake-name Vale \
   --workspace /srv/juniper \
   --access workspace \
   --skip-finish
@@ -148,7 +160,7 @@ bun run finish -- --help
 
 ## Verify the speaker
 
-Try these in order:
+Try these in order, replacing “Juniper” if you selected another wake name:
 
 > “Juniper, explain photosynthesis in two sentences.”
 
@@ -157,7 +169,8 @@ Try these in order:
 > “Juniper, create a small web game in my workspace and tell me when it is
 > done.”
 
-“Juniper” is required for every new request, including interruptions. The
+The configured wake name is required for every new request, including
+interruptions. The
 offline gate runs locally, closes again after every answer, and keeps the same
 GPT Live session so conversation context survives.
 
@@ -170,12 +183,18 @@ GPT Live session so conversation context survives.
 Search and Codex work run independently. Codex tasks are serialized,
 acknowledged when they start, and announced through GPT Live when they finish.
 
-## Voices and access
+## Voices, wake names, and access
 
 Choose Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol, Spruce, or Vale on the
-paired `/setup` page. Vale is the new-device default. Changing the voice
-reconnects GPT Live automatically; the wake phrase remains Juniper unless its
-optional Third Party Key is changed.
+paired `/setup` page. Vale is the new-device voice default. Choose any of those
+names as a wake preset or enter a custom English wake name. Juniper is the
+default. Saving either setting reconnects GPT Live automatically while keeping
+the device pairing and ChatGPT authorization. The new wake name is then
+required before every request and interruption.
+
+For unattended initial setup, pass `--wake-name NAME`. After pairing, the
+server-owned `/setup` selection takes precedence and survives Ability syncs and
+Agent restarts.
 
 Codex defaults to **Workspace only**:
 
@@ -199,15 +218,17 @@ bun run tunnel -- status
 curl http://127.0.0.1:3000/healthz
 ```
 
-For a firmware 1.0.8 Ability code update:
+For an Ability code update:
 
 ```bash
 bun run ability:prepare-sync
 ```
 
-Reconnect the DevKit, tap **Sync Abilities**, and restart the Agent. This only
-archives the cached GPT Live folder; it does not delete the cloud Ability,
-pairing, or host state.
+On firmware 1.1.1, this uses OpenHome's device-native capability sync and
+restarts GPT Live automatically. Firmware 1.0.8 falls back to archiving the
+cached Ability; reconnect the DevKit, tap **Sync Abilities**, and restart the
+Agent. Neither path deletes the cloud Ability, pairing, ChatGPT authorization,
+or host state.
 
 - [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
 - [Manual setup and upgrades](docs/MANUAL-INSTALL.md)

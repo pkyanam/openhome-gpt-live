@@ -81,6 +81,12 @@ links, Ability installation, Sync Abilities, and Restart Agent in that order.
 Codes expire after 15 minutes. Restart the Agent to request another one. The
 local inbox is mode 0600 and deletes a code when it is paired or expires.
 
+If one browser is already paired, open `/setup` there and choose **Pair another
+browser**. Enter the displayed code on the phone, tablet, or second computer.
+Browser pairing uses a signed HttpOnly cookie per browser profile; ChatGPT
+authorization and device credentials remain server-side, and existing paired
+browsers are not signed out.
+
 ## The ChatGPT authorization code is missing
 
 The eight-digit OpenHome pairing code comes first. After the browser is paired,
@@ -89,7 +95,7 @@ few seconds; it refreshes automatically. Tap **Open ChatGPT authorization** and
 enter the code shown there. Do not paste a bearer token or capture browser
 cookies.
 
-## Saying “Juniper” does nothing
+## Saying the wake name does nothing
 
 Check in order:
 
@@ -102,8 +108,10 @@ Check in order:
    Activity chat to install/start the persistent worker.
 7. `/setup` says the DevKit is live and ChatGPT is connected.
 
-Say the wake phrase as part of one request: “Juniper, explain photosynthesis,”
-not “Juniper” followed by a long pause.
+Confirm the wake name shown on `/setup`, then say it as part of one request:
+“Juniper, explain photosynthesis,” not “Juniper” followed by a long pause.
+Juniper is only the default; voice-name presets and custom English names can be
+selected on `/setup`.
 
 ## Web search says unavailable or starts Codex
 
@@ -116,6 +124,19 @@ After upgrading, update the same Ability object in place, tap **Sync Abilities**
 and **Restart Agent**. On `/setup`, a successful request should show **Last
 routed request: OpenAI web search** while Codex remains idle.
 
+## The first request works, then later wake requests receive no answer
+
+Upgrade the host and Ability to **0.3.2 or newer**. Some `/wm` calls remain
+nominally connected after a native search while silently refusing later audio
+turns. The DevKit now detects one authenticated request with no assistant audio,
+marks the session `reconnecting`, and negotiates a fresh call automatically.
+Pairing, ChatGPT authorization, voice, and wake-name settings are preserved.
+
+If a request receives no answer, wait roughly twenty seconds for `/setup` to
+return to `live`, then say the wake name and request once more. A persistent
+named tunnel is recommended when Quick Tunnel logs also show intermittent 502
+responses.
+
 ## Codex finishes silently or mixes requests
 
 Version 0.2.0 serializes and deduplicates Codex handoffs, acknowledges accepted
@@ -125,24 +146,30 @@ status` work for the same host user, then inspect `data/server-error.log`.
 
 ## The date or time is stale
 
-The DevKit refreshes an authenticated host-clock context before every wake
-request, and the app-server answers clock reads from the host clock. Confirm the
-host's system time and timezone are correct. Clock questions use neither web
-search nor Codex.
+Version 0.3.1 and newer uses the app-server's live `currentTime/read` provider.
+It never injects a timestamp as a new realtime turn. Confirm the host's system
+time and timezone are correct. Clock questions use neither web search nor Codex.
 
-## Changing the voice has no effect
+If the speaker recites the date/time after an unrelated request, stop the
+DevKit worker, upgrade the host and Ability, Sync Abilities, then restart the
+Agent. Older per-wake timestamp injection could outrank the actual request.
 
-Use the picker on the paired `/setup` page. Saving closes the current Live
+## Changing the voice or wake name has no effect
+
+Use the controls on the paired `/setup` page. Saving closes the current Live
 session. The page should show `reconnecting` and return to `live` automatically,
-normally within a few seconds. Confirm the selected voice remains visible.
+normally within a few seconds. Confirm the selected voice and wake name remain
+visible.
 
 If it stays `closed`, the DevKit probably still has an Ability older than 0.2.1.
 In OpenHome, run **Sync Abilities**, then **Restart Agent** once. The optional
-`openhome_gpt_live_voice` Third Party Key is only an initial value; the paired
-browser selection is server-owned and is enforced on every Live negotiation.
+`openhome_gpt_live_voice` and `openhome_gpt_live_wake_phrase` Third Party Keys
+are only initial values; the paired browser selections are server-owned and
+enforced whenever the DevKit reconnects.
 
 The supported voices are Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol,
-Spruce, and Vale. Voice and wake phrase are independent.
+Spruce, and Vale. Those names are also wake-name presets, or enter a custom
+1–40 character English name. Speaking voice and wake name are independent.
 
 ## It worked until a reboot
 
@@ -183,18 +210,23 @@ working default microphone/speaker. In the Ability editor, invoke the
 
 Custom ALSA device names bypass the default PipeWire echo-cancel path.
 
-## Juniper hears itself or interruption requires yelling
+## The speaker hears itself or interruption requires yelling
 
 The official DevKit path uses PipeWire's WebRTC acoustic echo canceller.
 Confirm the Ability uses `default` for capture and playback. Do not point
 capture directly at an exclusive hardware ALSA source unless diagnosing.
 
-Every interruption also requires “Juniper.” The worker cuts playback when its
-offline detector hears the phrase, then forwards the replacement request. Room
-acoustics, volume, and custom Raspberry Pi hardware can still affect double
-talk.
+Every interruption also requires the configured wake name. Version 0.3.1
+removes permissive phonetic aliases, requires a longer exact detector result,
+and does not reopen the ordinary wake gate until assistant playback has ended.
+The worker can still cut playback for a real wake-name barge-in. Room acoustics,
+volume, and custom Raspberry Pi hardware can affect double talk.
 
-## Both OpenHome and Juniper answer
+If the speaker starts a response without a person saying the wake name, treat
+it as a safety failure: stop the DevKit worker, then upgrade and Sync before
+restarting it.
+
+## Both OpenHome and GPT Live answer
 
 OpenHome's public Ability SDK does not expose a provider-registration hook.
 Enable the built-in Agent wake word and change it to a reserved recovery phrase,
@@ -203,8 +235,15 @@ default pipeline answer ambient speech.
 
 ## Firmware version
 
-The integration has been exercised on OpenHome firmware 1.0.8. Firmware 1.1.0
-is not a prerequisite. On 1.0.8, Local Ability background providers are not
-reliably invoked by Agent restart, so use the one-time Activity diagnostic to
-bootstrap the enabled systemd worker. Do not reflash solely for this project
-when 1.0.8 is otherwise healthy.
+The integration has been physically exercised on OpenHome firmware 1.0.8 and
+1.1.1. On 1.0.8, Local Ability background providers are not reliably invoked by
+Agent restart, so use the one-time Activity diagnostic to bootstrap the enabled
+systemd worker. Firmware 1.1.1 adds a device-native capability-sync command,
+which `bun run ability:prepare-sync` uses automatically.
+
+A firmware replacement may remove the firmware-managed Local Ability directory.
+Version 0.3.3 stages the persistent boot worker under
+`~/.local/share/openhome-gpt-live/runtime`, so the provider no longer depends on
+that replaceable path. Run `bun run upload:ability` followed by
+`bun run ability:prepare-sync` to restore or upgrade the cloud Ability after a
+firmware change.

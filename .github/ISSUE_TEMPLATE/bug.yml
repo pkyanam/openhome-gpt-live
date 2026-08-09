@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Version or commit
-      placeholder: v0.1.0
+      placeholder: v0.3.3 or commit SHA
     validations:
       required: true
   - type: dropdown
@@ -28,7 +28,7 @@ body:
     id: firmware
     attributes:
       label: OpenHome firmware
-      placeholder: 1.0.8
+      placeholder: 1.1.1
     validations:
       required: true
   - type: textarea

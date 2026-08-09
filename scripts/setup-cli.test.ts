@@ -13,8 +13,10 @@ describe("setup CLI", () => {
     expect(installer.exitCode).toBe(0);
     expect(installer.stdout.toString()).toContain("--tunnel cloudflare");
     expect(installer.stdout.toString()).toContain("--non-interactive");
+    expect(installer.stdout.toString()).toContain("--wake-name");
     expect(setup.exitCode).toBe(0);
     expect(setup.stdout.toString()).toContain("existing, cloudflare, quick, or later");
+    expect(setup.stdout.toString()).toContain("--wake-name");
   });
 
   test("supports deferred setup and preserves generated secrets on rerun", async () => {
@@ -49,6 +51,7 @@ describe("setup CLI", () => {
       expect(values.APP_ALLOWED_CHATGPT_EMAIL).toBe("");
       expect(values.LWC_SECRET).toHaveLength(64);
       expect(values.DEVKIT_BOOTSTRAP_TOKEN).toHaveLength(64);
+      expect(values.OPENHOME_GPT_LIVE_WAKE_PHRASE).toBe("juniper");
       const firstSource = await readFile(envPath, "utf8");
 
       const third = Bun.spawnSync([

@@ -42,13 +42,20 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
       const name = typeof payload["name"] === "string" ? payload["name"] : "OpenHome DevKit";
       const initialVoice = normalizeVoice(payload["voice"] ?? "vale");
       if (!initialVoice) return json({ error: "invalid_voice" }, { status: 400 });
+      const initialWakePhrase = normalizeWakePhrase(payload["wakePhrase"] ?? "juniper");
+      if (!initialWakePhrase) return json({ error: "invalid_wake_phrase" }, { status: 400 });
       const deviceId = payload["deviceId"];
       const deviceToken = payload["deviceToken"];
       const resume = typeof deviceId === "string" && typeof deviceToken === "string"
         ? { deviceId, deviceToken }
         : undefined;
       try {
-        const registration = await options.registry.register(name, resume, initialVoice);
+        const registration = await options.registry.register(
+          name,
+          resume,
+          initialVoice,
+          initialWakePhrase,
+        );
         const publicBaseUrl = resolvePublicBaseUrl(request, options.publicBaseUrl);
         if (registration.pairingCode && options.pairingCodes) {
           await options.pairingCodes.record({
@@ -95,7 +102,10 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
     if (settingsMatch && request.method === "GET") {
       try {
         const record = await authenticateDeviceRequest(options.registry, settingsMatch[1]!, request);
-        return json({ voice: normalizeVoice(record.voice) ?? "vale" });
+        return json({
+          voice: normalizeVoice(record.voice) ?? "vale",
+          wakePhrase: normalizeWakePhrase(record.wakePhrase) ?? "juniper",
+        });
       } catch (error) {
         return json({ error: "device_unauthorized", message: publicError(error) }, { status: 401 });
       }
@@ -150,22 +160,57 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
       }
     }
 
-    if (path === "/api/pairing/voice" && request.method === "POST") {
+    if (path === "/api/pairing/invite" && request.method === "POST") {
+      try {
+        const record = await authenticatePairingRequest(options.registry, request);
+        const pairingCode = await options.registry.issuePairing(record.id);
+        const setupUrl = `${resolvePublicBaseUrl(request, options.publicBaseUrl)}/setup`;
+        await options.pairingCodes?.record({
+          deviceId: record.id,
+          deviceName: record.name,
+          code: pairingCode,
+          setupUrl,
+        });
+        const updated = await options.registry.get(record.id);
+        return json({
+          pairingCode,
+          setupUrl,
+          expiresAt: updated?.pairingExpiresAt,
+        });
+      } catch {
+        return json({ error: "pairing_not_authenticated" }, { status: 401 });
+      }
+    }
+
+    if (
+      (path === "/api/pairing/settings" || path === "/api/pairing/voice")
+      && request.method === "POST"
+    ) {
       try {
         let record = await authenticatePairingRequest(options.registry, request);
         const payload = await readJson(request);
         if (payload instanceof Response) return payload;
         const voice = normalizeVoice(payload["voice"]);
         if (!voice) return json({ error: "invalid_voice" }, { status: 400 });
+        const wakePhrase = path === "/api/pairing/settings"
+          ? normalizeWakePhrase(payload["wakePhrase"])
+          : normalizeWakePhrase(record.wakePhrase) ?? "juniper";
+        if (!wakePhrase) {
+          return json({
+            error: "invalid_wake_phrase",
+            message: "Use 1–40 English letters, spaces, or hyphens for the wake name.",
+          }, { status: 400 });
+        }
         if (record.codexState === "working") {
           return json({
             error: "codex_task_active",
-            message: "Wait for the active Codex task before changing the GPT Live voice.",
+            message: "Wait for the active Codex task before changing GPT Live settings.",
           }, { status: 409 });
         }
         const liveSessionId = record.liveSessionId;
         record = await options.registry.update(record.id, (current) => {
           current.voice = voice;
+          current.wakePhrase = wakePhrase;
         });
         let reconnecting = false;
         if (liveSessionId && record.lwcCookie) {
@@ -186,7 +231,7 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
         }
         return json({ session: options.registry.publicSession(record), reconnecting });
       } catch (error) {
-        return json({ error: "voice_update_failed", message: publicError(error) }, { status: 400 });
+        return json({ error: "settings_update_failed", message: publicError(error) }, { status: 400 });
       }
     }
 
@@ -558,6 +603,16 @@ function normalizeVoice(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
   return (CHATGPT_REALTIME_VOICES as readonly string[]).includes(normalized)
+    ? normalized
+    : undefined;
+}
+
+function normalizeWakePhrase(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, " ");
+  return normalized.length > 0
+    && normalized.length <= 40
+    && /^[a-z][a-z -]*$/.test(normalized)
     ? normalized
     : undefined;
 }

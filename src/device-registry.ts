@@ -4,6 +4,7 @@ import { JsonFileStore } from "./file-store.ts";
 const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PAIRING_TTL_MS = 15 * 60 * 1000;
 const MAX_PENDING_CONFIRMATIONS = 20;
+const MAX_PAIRED_BROWSERS = 8;
 
 export type DeviceLoginStatus =
   | "unauthenticated"
@@ -24,7 +25,9 @@ export interface DeviceRecord {
   deviceTokenHash: string;
   pairingCodeHash?: string;
   pairingExpiresAt?: number;
+  /** Legacy single-browser claim. Migrated when another browser pairs. */
   claimTokenHash?: string;
+  claimTokenHashes?: string[];
   lwcCookie?: string;
   loginStatus: DeviceLoginStatus;
   loginUser?: { email?: string; name?: string; plan?: string };
@@ -34,6 +37,7 @@ export interface DeviceRecord {
   liveSessionId?: string;
   selectedModel?: string;
   voice?: string;
+  wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
   codexQueueDepth?: number;
@@ -65,6 +69,7 @@ export interface PublicDeviceSession {
   liveSessionId?: string;
   selectedModel?: string;
   voice?: string;
+  wakePhrase?: string;
   connectionState?: string;
   codexState?: "idle" | "working";
   codexQueueDepth?: number;
@@ -90,15 +95,17 @@ export class DeviceRegistry {
     name: string,
     resume?: { deviceId: string; deviceToken: string },
     initialVoice = "vale",
+    initialWakePhrase = "juniper",
   ): Promise<DeviceRegistration> {
     if (resume) {
       let existing = await this.authenticateDevice(resume.deviceId, resume.deviceToken);
-      if (!existing.voice) {
+      if (!existing.voice || !existing.wakePhrase) {
         existing = await this.update(existing.id, (record) => {
-          record.voice = initialVoice;
+          if (!record.voice) record.voice = initialVoice;
+          if (!record.wakePhrase) record.wakePhrase = initialWakePhrase;
         });
       }
-      const pairing = existing.claimTokenHash ? undefined : await this.issuePairing(existing.id);
+      const pairing = hasBrowserClaim(existing) ? undefined : await this.issuePairing(existing.id);
       return {
         record: (await this.get(existing.id))!,
         deviceToken: resume.deviceToken,
@@ -114,6 +121,7 @@ export class DeviceRegistry {
       deviceTokenHash: this.hash("device", deviceToken),
       loginStatus: "unauthenticated",
       voice: initialVoice,
+      wakePhrase: initialWakePhrase,
       pendingConfirmations: [],
       createdAt: this.now(),
       lastSeenAt: this.now(),
@@ -183,7 +191,11 @@ export class DeviceRegistry {
       ) {
         throw new Error("Pairing code is invalid or expired.");
       }
-      current.claimTokenHash = this.hash("claim", claimToken);
+      const nextClaimHash = this.hash("claim", claimToken);
+      const existingClaims = browserClaimHashes(current);
+      current.claimTokenHashes = [...new Set([...existingClaims, nextClaimHash])]
+        .slice(-MAX_PAIRED_BROWSERS);
+      delete current.claimTokenHash;
       delete current.pairingCodeHash;
       delete current.pairingExpiresAt;
     });
@@ -194,7 +206,8 @@ export class DeviceRegistry {
     const parsed = parseClaimCookie(cookieValue);
     if (!parsed) throw new Error("Pairing session is not authenticated.");
     const record = await this.get(parsed.deviceId);
-    if (!record?.claimTokenHash || !safeEqual(record.claimTokenHash, this.hash("claim", parsed.token))) {
+    const targetHash = this.hash("claim", parsed.token);
+    if (!record || !browserClaimHashes(record).some((claimHash) => safeEqual(claimHash, targetHash))) {
       throw new Error("Pairing session is not authenticated.");
     }
     return record;
@@ -282,7 +295,7 @@ export class DeviceRegistry {
     return {
       deviceId: record.id,
       name: record.name,
-      paired: Boolean(record.claimTokenHash),
+      paired: hasBrowserClaim(record),
       loginStatus: record.loginStatus,
       ...(record.loginUser ? { loginUser: record.loginUser } : {}),
       ...(record.userCode ? { userCode: record.userCode } : {}),
@@ -291,6 +304,7 @@ export class DeviceRegistry {
       ...(record.liveSessionId ? { liveSessionId: record.liveSessionId } : {}),
       ...(record.selectedModel ? { selectedModel: record.selectedModel } : {}),
       ...(record.voice ? { voice: record.voice } : {}),
+      ...(record.wakePhrase ? { wakePhrase: record.wakePhrase } : {}),
       ...(record.connectionState ? { connectionState: record.connectionState } : {}),
       ...(record.codexState ? { codexState: record.codexState } : {}),
       ...(record.codexQueueDepth !== undefined ? { codexQueueDepth: record.codexQueueDepth } : {}),
@@ -345,6 +359,17 @@ function safeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function browserClaimHashes(record: DeviceRecord): string[] {
+  return [
+    ...(record.claimTokenHashes ?? []),
+    ...(record.claimTokenHash ? [record.claimTokenHash] : []),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function hasBrowserClaim(record: DeviceRecord): boolean {
+  return browserClaimHashes(record).length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

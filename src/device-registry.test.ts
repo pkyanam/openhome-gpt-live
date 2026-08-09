@@ -14,9 +14,15 @@ afterEach(async () => {
 describe("DeviceRegistry", () => {
   test("registers, resumes, pairs, and authenticates without storing raw secrets", async () => {
     const { registry, store } = await createRegistry();
-    const registration = await registry.register(" Kitchen DevKit ", undefined, "vale");
+    const registration = await registry.register(
+      " Kitchen DevKit ",
+      undefined,
+      "vale",
+      "juniper",
+    );
     expect(registration.record.name).toBe("Kitchen DevKit");
     expect(registration.record.voice).toBe("vale");
+    expect(registration.record.wakePhrase).toBe("juniper");
     expect(registration.pairingCode).toMatch(/^\d{8}$/);
 
     const stored = await store.get(registration.record.id);
@@ -28,13 +34,20 @@ describe("DeviceRegistry", () => {
     expect((await registry.authenticateClaim(cookie)).id).toBe(registration.record.id);
     await expect(registry.claim(registration.pairingCode!)).rejects.toThrow("invalid or expired");
 
+    const secondCode = await registry.issuePairing(registration.record.id);
+    const secondClaim = await registry.claim(secondCode);
+    const secondCookie = pairingCookieValue(secondClaim.record.id, secondClaim.claimToken);
+    expect((await registry.authenticateClaim(cookie)).id).toBe(registration.record.id);
+    expect((await registry.authenticateClaim(secondCookie)).id).toBe(registration.record.id);
+
     const resumed = await registry.register("ignored", {
       deviceId: registration.record.id,
       deviceToken: registration.deviceToken,
-    }, "juniper");
+    }, "juniper", "maple");
     expect(resumed.record.id).toBe(registration.record.id);
     expect(resumed.pairingCode).toBeUndefined();
     expect(resumed.record.voice).toBe("vale");
+    expect(resumed.record.wakePhrase).toBe("juniper");
   });
 
   test("serializes simultaneous record updates", async () => {

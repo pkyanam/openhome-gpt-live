@@ -34,6 +34,7 @@ Setup options:
   --hostname HOST         DNS hostname for persistent Cloudflare mode
   --tunnel-name NAME      Cloudflare Tunnel name (default: openhome-gpt-live)
   --email EMAIL           ChatGPT account email allowed to authorize
+  --wake-name NAME        Initial wake name (default: Juniper)
   --workspace PATH        Folder available to Codex tools
   --access MODE           workspace, confirmed, or full
   --non-interactive       Use flags, environment, and saved values only
@@ -65,12 +66,12 @@ while [ "$#" -gt 0 ]; do
     --skip-service) skip_service=1; shift ;;
     --skip-finish) skip_finish=1; shift ;;
     --non-interactive) non_interactive=1; setup_args+=("--non-interactive"); shift ;;
-    --tunnel|--public-url|--hostname|--tunnel-name|--email|--workspace|--access)
+    --tunnel|--public-url|--hostname|--tunnel-name|--email|--wake-name|--workspace|--access)
       [ "$#" -ge 2 ] || fail "$1 requires a value"
       setup_args+=("$1" "$2")
       shift 2
       ;;
-    --tunnel=*|--public-url=*|--hostname=*|--tunnel-name=*|--email=*|--workspace=*|--access=*)
+    --tunnel=*|--public-url=*|--hostname=*|--tunnel-name=*|--email=*|--wake-name=*|--workspace=*|--access=*)
       setup_args+=("$1")
       shift
       ;;

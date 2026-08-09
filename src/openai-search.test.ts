@@ -12,4 +12,12 @@ describe("OpenAI subscription web search", () => {
       'data: {"type":"response.output_text.done","text":"I guessed."}',
     )).toThrow("without running web search");
   });
+
+  test("accepts the explicit hosted-search completion event", () => {
+    const events = [
+      'data: {"type":"response.web_search_call.completed"}',
+      'data: {"type":"response.output_text.done","text":"Bitcoin is 123 dollars."}',
+    ].join("\n");
+    expect(parseOpenAISearchEvents(events)).toBe("Bitcoin is 123 dollars.");
+  });
 });

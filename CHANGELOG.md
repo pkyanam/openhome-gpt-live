@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.3.3 - 2026-08-09
+
+- Keep the boot worker in the persistent GPT Live state directory instead of
+  OpenHome's firmware-managed runtime tree. A firmware replacement can no
+  longer delete the executable behind an apparently running systemd service.
+- Detect firmware v1.1.1's official `devkit_cmd.py sync-capabilities` support
+  and let the post-upload sync command complete Ability sync plus provider
+  restart automatically. Firmware 1.0.8 retains the safe
+  archive-and-manual-Sync fallback.
+- Allow up to five minutes for v1.1.1's dependency reinstall and 15-second
+  provider boot guard so a successful device sync is not reported as a timeout.
+- Record successful physical upgrade coverage from v1.0.8 to v1.1.1, including
+  restoration of the cloud Ability without losing pairing, ChatGPT auth, Vale,
+  Lara, Codex configuration, or host state.
+- Prevent GPT Live's own speech from creating intermittent mid-sentence holes:
+  wake-to-interrupt now requires sustained near-end speech in addition to the
+  exact offline wake match. Ordinary armed wake detection is unchanged.
+- Add a bounded 160 ms remote-audio jitter cushion and rate-limited frame-gap
+  telemetry so short scheduling/network gaps do not become audible word breaks
+  and longer upstream gaps are diagnosable.
+- Refresh the installer handoff, agent skill, manual, issue template, README,
+  and project site for the tested 1.0.8 and 1.1.1 firmware paths.
+
+## 0.3.2 - 2026-08-09
+
+- Detect a `/wm` transport that remains nominally connected after native web
+  search but stops accepting later microphone turns.
+- Recycle that stale Live session after one authenticated request receives no
+  assistant audio, instead of repeatedly re-arming a permanently dead call.
+- Surface the recovery as `reconnecting`; pairing, ChatGPT authorization,
+  selected voice, wake name, and host configuration remain intact.
+- Add **Pair another browser** to the authenticated setup page. A short-lived
+  code authorizes a phone, tablet, or second computer without moving ChatGPT
+  credentials into that browser or invalidating existing control surfaces.
+- Reduce custom wake-name latency by confirming three exact decoder hits inside
+  an 800 ms window while tolerating brief blank decoder frames. Wrong phrases,
+  low-confidence matches, speaker playback, and expired candidates still reset
+  or reject the wake.
+- Route asset price and pricing questions such as Bitcoin to the subscription's
+  hosted OpenAI search lane, require an actual `web_search` call, and log routing
+  plus completion/failure timing for diagnostics.
+
+## 0.3.1 - 2026-08-08
+
+- Fixed a runaway false-wake loop where speaker/ambient audio was accepted as
+  broad “Juniper” phonetic aliases and repeatedly activated GPT Live.
+- Removed per-wake developer timestamp injection, which could make `/wm`
+  recite the date/time instead of answering the owner's actual request.
+- Exact date/time now comes from the app-server's on-demand
+  `currentTime/read` provider without creating a realtime turn.
+- Kept the active request gate through assistant playback so explicit
+  wake-name barge-in remains available without reopening the ordinary detector
+  into the speaker's own audio.
+- Added server-owned voice and wake-name settings to `/setup`, including all
+  nine voice names as presets and validated custom English names.
+- Added `--wake-name` to interactive and non-interactive setup, and updated the
+  installer, finish handoff, Ability, project site, agent skill, and docs.
+
 ## 0.3.0 - 2026-08-08
 
 - Replace fragmented onboarding with an idempotent interactive installer,

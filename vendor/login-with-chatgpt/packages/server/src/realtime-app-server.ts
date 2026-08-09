@@ -363,14 +363,16 @@ export class ChatGPTRealtimeAppServerSession {
     await operation;
   }
 
-  /** Refresh the native model's authoritative clock without starting a Codex handoff. */
+  /**
+   * Legacy compatibility endpoint.
+   *
+   * Appending a developer clock item during an open microphone turn can make
+   * `/wm` answer the timestamp instead of the owner's actual request. Exact
+   * time is already provided on demand by `currentTime/read`, so a refresh must
+   * not mutate the realtime thread.
+   */
   async refreshClock(): Promise<void> {
     if (!this.threadId || !this.startOptions) throw new Error("Realtime session is not running.");
-    await this.expectResult("thread/realtime/appendText", {
-      threadId: this.threadId,
-      role: "developer",
-      text: realtimeClockContext(this.startOptions, new Date(this.nowMs())),
-    });
   }
 
   close(): Promise<void> {
@@ -1149,7 +1151,7 @@ export function realtimeExecutionConfig(
   };
 }
 
-/** @internal Builds authoritative native Live context without an agent handoff. */
+/** @internal Builds authoritative native Live clock policy without a stale timestamp. */
 export function realtimeClockContext(
   options: Pick<StartRealtimeAppServerOptions, "timezone" | "timezoneOffsetMinutes">,
   now = new Date(),
@@ -1158,56 +1160,15 @@ export function realtimeClockContext(
   const timezone = options.timezone
     ?? Intl.DateTimeFormat().resolvedOptions().timeZone
     ?? "UTC";
-  const local = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    dateStyle: "full",
-    timeStyle: "long",
-  }).format(now);
-  const speakableTime = formatSpeakableTime(now, timezone);
   const offset = options.timezoneOffsetMinutes;
   return (
-    `Authoritative owner clock snapshot captured live by the Mac bridge: ${local}. ` +
-    `Speech-ready local time: ${speakableTime}. ` +
-    `IANA timezone: ${timezone}. UTC instant: ${now.toISOString()}.` +
+    `Authoritative owner IANA timezone: ${timezone}.` +
     (typeof offset === "number" ? ` JavaScript timezone offset minutes: ${offset}.` : "") +
-    " Answer current date, day, time, and timezone questions directly and immediately from this live " +
-    "clock context and the conversation's elapsed time. Never hand these questions to Codex, never use a " +
-    "tool or web search for them, and never say that you are checking. Always pronounce the hour as a whole " +
+    " For an exact current date, day, or time, use this realtime thread's live currentTime/read provider. " +
+    "Never answer from a session-start timestamp or elapsed-time estimate. Never hand these questions to " +
+    "Codex or web search, and never say that you are checking. Always pronounce the hour as a whole " +
     "number word: for example, 12:50 is 'twelve fifty', never 'one two fifty'."
   );
-}
-
-function formatSpeakableTime(now: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZoneName: "long",
-  }).formatToParts(now);
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  const hour = Number(value("hour"));
-  const minute = Number(value("minute"));
-  const hourWords = [
-    "twelve", "one", "two", "three", "four", "five", "six",
-    "seven", "eight", "nine", "ten", "eleven", "twelve",
-  ];
-  const small = [
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
-    "eighteen", "nineteen",
-  ];
-  const tens = ["", "", "twenty", "thirty", "forty", "fifty"];
-  const minuteWords = minute === 0
-    ? "o'clock"
-    : minute < 10
-      ? `oh ${small[minute]}`
-      : minute < 20
-        ? small[minute]
-        : `${tens[Math.floor(minute / 10)]}${minute % 10 ? ` ${small[minute % 10]}` : ""}`;
-  const period = value("dayPeriod").toUpperCase().replace("AM", "A.M.").replace("PM", "P.M.");
-  return `${hourWords[hour] ?? String(hour)} ${minuteWords} ${period} ${value("timeZoneName")}`.trim();
 }
 
 function unsupportedAttestationToken(): string {

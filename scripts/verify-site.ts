@@ -12,6 +12,7 @@ if (/TODO|PLACEHOLDER/i.test(`${html}\n${css}\n${script}`)) throw new Error("Sit
 if (!html.includes("devkit-hero.png") || !html.includes("og.png")) throw new Error("Generated DevKit assets are not wired into the site.");
 if (!html.includes("id=\"setup\"") || !html.includes("id=\"architecture\"") || !html.includes("id=\"faq\"")) throw new Error("Core documentation anchors are missing.");
 if (!script.includes("installModes") || !script.includes("navigator.clipboard")) throw new Error("Interactive setup controls are missing.");
+if (!html.includes('id="wake-name"') || !script.includes("wakeNameInput")) throw new Error("Interactive wake-name controls are missing.");
 
 for (const image of ["devkit-hero.png", "og.png"]) {
   const details = await stat(resolve(root, image));

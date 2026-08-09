@@ -72,7 +72,7 @@ describe("headless DevKit routes", () => {
       `https://service.test/api/device/${registration.deviceId}/settings`,
       { headers: { authorization: `Bearer ${registration.deviceToken}` } },
     ));
-    expect(await settingsBefore.json()).toEqual({ voice: "vale" });
+    expect(await settingsBefore.json()).toEqual({ voice: "vale", wakePhrase: "juniper" });
 
     const deviceBase = `https://service.test/api/device/${registration.deviceId}/chatgpt`;
     const loginResponse = await route(new Request(`${deviceBase}/login`, {
@@ -92,6 +92,28 @@ describe("headless DevKit routes", () => {
     expect(pairingCookie).toStartWith("ohgpt_pairing=");
     expect(claimResponse.headers.get("set-cookie")).toContain("Secure");
     expect(await pairingCodes.latest()).toBeUndefined();
+
+    const inviteResponse = await route(new Request("https://service.test/api/pairing/invite", {
+      method: "POST",
+      headers: { cookie: pairingCookie },
+    }));
+    expect(inviteResponse.status).toBe(200);
+    const invite = await inviteResponse.json() as { pairingCode: string; setupUrl: string };
+    expect(invite.pairingCode).toMatch(/^\d{8}$/);
+    expect(invite.setupUrl).toBe("https://voice.example.test/setup");
+
+    const secondClaimResponse = await route(jsonRequest("https://service.test/api/pairing/claim", {
+      method: "POST",
+      body: { code: invite.pairingCode },
+    }));
+    expect(secondClaimResponse.status).toBe(200);
+    const secondPairingCookie = secondClaimResponse.headers.get("set-cookie")!.split(";")[0]!;
+    expect((await route(new Request("https://service.test/api/pairing/session", {
+      headers: { cookie: pairingCookie },
+    }))).status).toBe(200);
+    expect((await route(new Request("https://service.test/api/pairing/session", {
+      headers: { cookie: secondPairingCookie },
+    }))).status).toBe(200);
 
     const sessionResponse = await route(new Request(`${deviceBase}/session`, {
       headers: { authorization: `Bearer ${registration.deviceToken}` },
@@ -151,15 +173,19 @@ describe("headless DevKit routes", () => {
     expect(busyVoiceResponse.status).toBe(409);
     await registry.update(registration.deviceId, (record) => { record.codexState = "idle"; });
 
-    const voiceResponse = await route(jsonRequest("https://service.test/api/pairing/voice", {
+    const voiceResponse = await route(jsonRequest("https://service.test/api/pairing/settings", {
       method: "POST",
       cookie: pairingCookie,
-      body: { voice: "vale" },
+      body: { voice: "vale", wakePhrase: "maple" },
     }));
     expect(voiceResponse.status).toBe(200);
     expect(await voiceResponse.json()).toMatchObject({
       reconnecting: true,
-      session: { voice: "vale", connectionState: "reconnecting" },
+      session: {
+        voice: "vale",
+        wakePhrase: "maple",
+        connectionState: "reconnecting",
+      },
     });
     expect(internalRequests.some((request) =>
       request.method === "DELETE"
@@ -172,6 +198,13 @@ describe("headless DevKit routes", () => {
       body: { voice: "made-up" },
     }));
     expect(invalidVoice.status).toBe(400);
+
+    const invalidWakePhrase = await route(jsonRequest("https://service.test/api/pairing/settings", {
+      method: "POST",
+      cookie: pairingCookie,
+      body: { voice: "vale", wakePhrase: "juniper!" },
+    }));
+    expect(invalidWakePhrase.status).toBe(400);
     expect(internalRequests.every((request) => !request.headers.has("authorization"))).toBeTrue();
     expect(internalRequests.slice(1).every((request) => request.headers.get("cookie") === "lwc_session=opaque-login-cookie")).toBeTrue();
   });

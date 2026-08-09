@@ -53,7 +53,7 @@
           <button class="copy-button" type="button" data-copy aria-label="Copy install command">Copy</button>
         </div>
         <ul class="hero-proof" aria-label="Compatibility">
-          <li><b>1.0.8</b><span>firmware tested</span></li>
+          <li><b>1.0.8 + 1.1.1</b><span>firmware tested</span></li>
           <li><b>9</b><span>speaking voices</span></li>
           <li><b>0</b><span>OpenAI API keys</span></li>
         </ul>
@@ -116,7 +116,7 @@
         <li><span>01</span><div><h3>Prepare the host</h3><p>Install or update the bridge, choose HTTPS, build the Ability, and start only the services your configuration is ready for.</p></div></li>
         <li><span>02</span><div><h3>Sync OpenHome</h3><p>The guided finish step prints the exact Third Party Keys and the shortest dashboard checklist.</p></div></li>
         <li><span>03</span><div><h3>Pair ChatGPT</h3><p>Retrieve the DevKit code from the private host inbox and authorize in any trusted browser. No speaker dictation required.</p></div></li>
-        <li><span>04</span><div><h3>Say “Juniper”</h3><p>Every new request starts with the local wake phrase. Context stays alive; ambient room audio stays gated.</p></div></li>
+        <li><span>04</span><div><h3>Choose a wake name</h3><p>Use Juniper, any voice-name preset, or a custom English name. Every request starts there; ambient room audio stays gated.</p></div></li>
       </ol>
     </section>
 
@@ -147,7 +147,7 @@
         </article>
       </div>
       <div class="flow-line reveal" aria-label="Data flow">
-        <div><b>ROOM</b><span>Juniper + request</span></div><i>→</i>
+        <div><b>ROOM</b><span>wake name + request</span></div><i>→</i>
         <div><b>DEVKIT</b><span>wake gate + WebRTC audio</span></div><i>→</i>
         <div><b>HOST</b><span>auth + routing + tools</span></div><i>→</i>
         <div><b>GPT LIVE</b><span>streaming speech back</span></div>
@@ -160,7 +160,7 @@
         <h2>Less demo.<br><em>More appliance.</em></h2>
       </div>
       <div class="feature-grid reveal">
-        <article class="feature feature-wide"><span class="feature-tag">WAKE</span><h3>Juniper, every time.</h3><p>The offline wake gate closes after every answer without discarding the Live conversation. Background TV chatter does not become a request.</p><div class="gate-demo"><span>ambient</span><i></i><b>JUNIPER</b><i class="open"></i><span>request</span></div></article>
+        <article class="feature feature-wide"><span class="feature-tag">WAKE</span><h3>Your wake name, every time.</h3><p>The exact offline gate closes after every answer without discarding the Live conversation. Background TV chatter does not become a request.</p><div class="gate-demo"><span>ambient</span><i></i><b>YOUR NAME</b><i class="open"></i><span>request</span></div></article>
         <article class="feature"><span class="feature-tag">AUTH</span><h3>Your ChatGPT access.</h3><p>Device-code authorization through Login with ChatGPT. No OpenAI API key and no browser cookie capture.</p></article>
         <article class="feature"><span class="feature-tag">AUDIO</span><h3>Interrupt naturally.</h3><p>PipeWire WebRTC echo cancellation, playback-aware barge-in, and a safety guard against speaker self-wake loops.</p></article>
         <article class="feature"><span class="feature-tag">STATE</span><h3>Tasks that report back.</h3><p>Codex handoffs acknowledge the start, serialize overlapping work, and speak a completion result.</p></article>
@@ -172,11 +172,12 @@
       <div class="voice-stage reveal">
         <div class="section-heading light">
           <p class="kicker">04 / VOICES</p>
-          <h2>Choose the voice.<br><em>Keep the wake phrase.</em></h2>
-          <p>Speaking voice and wake phrase are independent. Save a new voice in the browser control page and GPT Live reconnects automatically.</p>
+          <h2>Choose the voice.<br><em>Name the wake gate.</em></h2>
+          <p>Speaking voice and wake name are independent. Pick a voice-name preset or enter your own name in the browser control page.</p>
         </div>
         <div class="voice-orb" aria-hidden="true"><span></span><i></i></div>
         <div class="selected-voice"><small>NOW SPEAKING</small><strong id="selected-voice">Vale</strong><p id="voice-line">Warm, direct, and ready when you say “Juniper.”</p></div>
+        <label class="wake-customizer"><span>WAKE NAME</span><input id="wake-name" value="Juniper" maxlength="40" list="site-wake-presets" aria-label="Example wake name"><datalist id="site-wake-presets"><option value="Arbor"><option value="Breeze"><option value="Cove"><option value="Ember"><option value="Juniper"><option value="Maple"><option value="Sol"><option value="Spruce"><option value="Vale"></datalist></label>
         <div class="voice-picker" role="list" aria-label="Available GPT Live voices">
           <button type="button" data-voice="Arbor">Arbor</button><button type="button" data-voice="Breeze">Breeze</button><button type="button" data-voice="Cove">Cove</button><button type="button" data-voice="Ember">Ember</button><button type="button" data-voice="Juniper">Juniper</button><button type="button" data-voice="Maple">Maple</button><button type="button" data-voice="Sol">Sol</button><button type="button" data-voice="Spruce">Spruce</button><button class="active" type="button" data-voice="Vale">Vale</button>
         </div>
@@ -208,12 +209,12 @@
         <details><summary>Do I need an OpenAI API key?<span>+</span></summary><p>No. Login with ChatGPT uses device-code authorization and the connected subscription. This project does not ask for ChatGPT browser cookies.</p></details>
         <details><summary>Do I need Codex?<span>+</span></summary><p>Only for local files, projects, apps, or computer actions. GPT Live conversation and OpenAI web search can run without Codex.</p></details>
         <details><summary>Is Cloudflare required?<span>+</span></summary><p>No. Use an existing stable HTTPS reverse proxy, let the wizard create a persistent named Cloudflare Tunnel, evaluate with a temporary Quick Tunnel, or configure HTTPS later.</p></details>
-        <details><summary>Does firmware 1.0.8 work?<span>+</span></summary><p>Yes—it is the physically tested baseline. The guided finish step includes its one-time background-worker bootstrap.</p></details>
+        <details><summary>Which firmware is tested?<span>+</span></summary><p>Firmware 1.0.8 and 1.1.1 are physically tested. Version 1.1.1 supports automatic capability sync; the guided flow includes the extra bootstrap needed by 1.0.8.</p></details>
       </div>
     </section>
 
     <section class="final-cta">
-      <div class="reveal"><p class="kicker">THE SPEAKER IS READY WHEN YOU ARE</p><h2>Say “Juniper.”<br><em>Then ask for more.</em></h2></div>
+      <div class="reveal"><p class="kicker">THE SPEAKER IS READY WHEN YOU ARE</p><h2>Say its name.<br><em>Then ask for more.</em></h2></div>
       <div class="cta-actions reveal"><a class="button primary" href="#setup">Start setup <span>↑</span></a><a class="button outline" href="https://github.com/pkyanam/openhome-gpt-live">Star on GitHub <span>↗</span></a></div>
     </section>
   </main>

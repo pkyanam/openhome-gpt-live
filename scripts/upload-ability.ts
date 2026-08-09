@@ -122,8 +122,8 @@ if (committedRelease?.is_committed !== true || !enabledRelease) {
 }
 
 console.log(`OpenHome GPT Live ${packageVersion} was committed in place; linked Third Party Keys were preserved.`);
-console.log("On firmware 1.0.8, run `bun run ability:prepare-sync` before the dashboard Sync.");
-console.log("Reconnect the DevKit in OpenHome, tap Sync Abilities, then restart the Agent.");
+console.log("Next, run `bun run ability:prepare-sync`.");
+console.log("Firmware 1.1.1 syncs and restarts automatically; firmware 1.0.8 then asks for dashboard Sync and Agent restart.");
 
 async function fetchAbilities(): Promise<unknown[]> {
   const listResponse = await fetch(`${apiBase}/api/capabilities/get-all-capabilities/`, {

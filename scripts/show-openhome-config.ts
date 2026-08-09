@@ -15,4 +15,4 @@ console.log(`openhome_gpt_live_server_url\n${env.PUBLIC_BASE_URL}\n`);
 console.log(`openhome_gpt_live_bootstrap_token\n${env.DEVKIT_BOOTSTRAP_TOKEN}\n`);
 console.log("Optional defaults:");
 console.log("openhome_gpt_live_voice = vale");
-console.log("openhome_gpt_live_wake_phrase = juniper");
+console.log(`openhome_gpt_live_wake_phrase = ${env.OPENHOME_GPT_LIVE_WAKE_PHRASE || "juniper"}`);

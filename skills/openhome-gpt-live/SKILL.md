@@ -1,6 +1,6 @@
 ---
 name: openhome-gpt-live
-description: Install, configure, update, develop, test, or diagnose the OpenHome GPT Live bridge and Local Ability on macOS or Linux. Use for OpenHome DevKit setup, persistent HTTPS or Cloudflare Tunnel configuration, Login with ChatGPT pairing, GPT Live voice/wake behavior, OpenAI search routing, Codex delegation, Ability packaging/sync, firmware 1.0.8 recovery, or speaker audio and service failures.
+description: Install, configure, update, develop, test, or diagnose the OpenHome GPT Live bridge and Local Ability on macOS or Linux. Use for OpenHome DevKit setup, persistent HTTPS or Cloudflare Tunnel configuration, Login with ChatGPT pairing, GPT Live voice/wake behavior, OpenAI search routing, Codex delegation, Ability packaging/sync, firmware 1.0.8 or 1.1.1 recovery, or speaker audio and service failures.
 ---
 
 # OpenHome GPT Live
@@ -56,8 +56,9 @@ pairing:code -- --wait=180`.
 2. Implement the smallest compatible change.
 3. Run `bun run check` and the relevant targeted test.
 4. For host-only changes, restart with `bun run service:install`.
-5. For Ability changes, upgrade the existing cloud Ability in place. On
-   firmware 1.0.8, run `bun run ability:prepare-sync` before dashboard Sync.
+5. For Ability changes, upgrade the existing cloud Ability in place, then run
+   `bun run ability:prepare-sync`. Firmware 1.1.1 synchronizes automatically;
+   firmware 1.0.8 then requires dashboard Sync and Agent restart.
 6. Run `skills/openhome-gpt-live/scripts/status.sh` and verify one physical wake
    request plus one no-wake negative request when audio gating changed.
 
