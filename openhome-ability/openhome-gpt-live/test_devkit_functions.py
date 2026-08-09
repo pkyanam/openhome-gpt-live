@@ -237,6 +237,21 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertIn("UMask=0077", unit)
         self.assertIn("ExecStartPre=/bin/sleep 15", unit)
         self.assertIn("devkit_functions.py _worker", unit)
+        self.assertIn("/.local/share/openhome-gpt-live/runtime/", unit)
+
+    def test_stages_worker_outside_the_firmware_managed_ability_tree(self):
+        original = live.STATE_DIR
+        with tempfile.TemporaryDirectory() as directory:
+            live.STATE_DIR = Path(directory)
+            try:
+                self.assertTrue(live._stage_worker_runtime())
+                target = live._runtime_worker_file()
+                self.assertTrue(target.is_file())
+                self.assertEqual(target.read_bytes(), Path(live.__file__).read_bytes())
+                self.assertTrue(target.stat().st_mode & 0o600)
+                self.assertFalse(live._stage_worker_runtime())
+            finally:
+                live.STATE_DIR = original
 
     def test_default_audio_uses_pipewire_echo_cancellation(self):
         capture = live._capture_command("default")
@@ -267,32 +282,71 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(aliases, ("juniper",))
         self.assertEqual(live._wake_phrase_aliases("Hey-Home"), ("hey home",))
 
-    def test_wake_grammar_requires_stable_exact_confident_frames(self):
+    def test_wake_grammar_confirms_exact_hits_inside_a_short_window(self):
         aliases = live._wake_phrase_aliases("juniper")
         frames = 0
+        deadline = 0.0
         for _ in range(live.WAKE_CONFIRM_FRAMES - 1):
-            frames, confirmed = live._advance_wake_confirmation(
-                frames, "juniper", 0.85, aliases
+            frames, deadline, confirmed = live._advance_wake_confirmation(
+                frames, deadline, "juniper", 0.85, aliases, 10.0
             )
             self.assertFalse(confirmed)
 
-        frames, confirmed = live._advance_wake_confirmation(
-            frames, "juniper", 0.85, aliases
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            frames, deadline, "juniper", 0.85, aliases, 10.1
         )
         self.assertTrue(confirmed)
         self.assertEqual(frames, 0)
 
-        frames, confirmed = live._advance_wake_confirmation(
-            2, "juniper", 0.79, aliases
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            2, 10.8, "juniper", 0.79, aliases, 10.2
         )
         self.assertFalse(confirmed)
         self.assertEqual(frames, 0)
+        self.assertEqual(deadline, 0.0)
 
-        frames, confirmed = live._advance_wake_confirmation(
-            live.WAKE_CONFIRM_FRAMES - 1, "june a per", 0.99, aliases
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            live.WAKE_CONFIRM_FRAMES - 1,
+            10.8,
+            "june a per",
+            0.99,
+            aliases,
+            10.2,
         )
         self.assertFalse(confirmed)
         self.assertEqual(frames, 0)
+        self.assertEqual(deadline, 0.0)
+
+    def test_wake_grammar_tolerates_brief_blank_frames_but_not_old_hits(self):
+        aliases = live._wake_phrase_aliases("lara")
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            0, 0.0, "lara", 0.90, aliases, 20.0
+        )
+        self.assertFalse(confirmed)
+
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            frames, deadline, None, 0.0, aliases, 20.3
+        )
+        self.assertFalse(confirmed)
+        self.assertEqual(frames, 1)
+
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            frames, deadline, "lara", 0.88, aliases, 20.4
+        )
+        self.assertFalse(confirmed)
+        self.assertEqual(frames, 2)
+
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            frames, deadline, "lara", 0.91, aliases, 20.5
+        )
+        self.assertTrue(confirmed)
+
+        frames, deadline, confirmed = live._advance_wake_confirmation(
+            1, 30.8, "lara", 0.92, aliases, 31.0
+        )
+        self.assertFalse(confirmed)
+        self.assertEqual(frames, 1)
+        self.assertAlmostEqual(deadline, 31.8)
 
     def test_wake_decoder_segments_long_silence(self):
         quiet = array.array("h", [2] * live.AUDIO_SAMPLES).tobytes()
@@ -310,19 +364,29 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertFalse(should_reset)
         self.assertEqual(frames, 0)
 
-    def test_returns_to_armed_mode_after_timeout_even_without_wm_state_events(self):
-        wake = {"active": True, "last_activity": 100.0, "idle_seconds": 30}
-        self.assertTrue(
-            live._should_return_to_wake_mode(wake, {"value": "speaking"}, now=200.0)
-        )
+    def test_recycles_a_live_transport_that_stops_answering_after_search(self):
+        wake = {
+            "active": True,
+            "assistant_response_seen": False,
+            "last_activity": 100.0,
+            "idle_seconds": 30,
+        }
         self.assertFalse(
-            live._should_return_to_wake_mode(wake, {"value": "listening"}, now=129.9)
+            live._should_recycle_unresponsive_session(wake, now=114.9)
         )
         self.assertTrue(
-            live._should_return_to_wake_mode(wake, {"value": "listening"}, now=130.0)
+            live._should_recycle_unresponsive_session(wake, now=115.0)
         )
-        self.assertTrue(
-            live._should_return_to_wake_mode(wake, {"value": "connected"}, now=130.0)
+
+        wake["assistant_response_seen"] = True
+        self.assertFalse(
+            live._should_recycle_unresponsive_session(wake, now=200.0)
+        )
+
+        wake["active"] = False
+        wake["assistant_response_seen"] = False
+        self.assertFalse(
+            live._should_recycle_unresponsive_session(wake, now=200.0)
         )
 
     def test_response_audio_rearms_only_after_playback_and_user_speech_end(self):
@@ -439,6 +503,8 @@ class DevKitProtocolTests(unittest.TestCase):
         }
         playback = {"cutoff": False, "barge_in": False}
         loud_frame = array.array("h", [2_000] * live.AUDIO_SAMPLES).tobytes()
+        for _ in range(live.WAKE_INTERRUPT_HOT_FRAMES - 1):
+            live._maybe_interrupt(loud_frame, state, channel, playback)
         live._maybe_interrupt(
             loud_frame,
             state,
@@ -502,7 +568,7 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertEqual(channel.messages, [])
         self.assertFalse(playback["cutoff"])
 
-    def test_wake_word_immediately_interrupts_at_attenuated_volume(self):
+    def test_attenuated_echo_wake_does_not_interrupt_playback(self):
         class Channel:
             readyState = "open"
 
@@ -534,7 +600,23 @@ class DevKitProtocolTests(unittest.TestCase):
             wake_word=True,
         )
         self.assertEqual(channel.messages, [])
+        self.assertFalse(playback["cutoff"])
+
+    def test_wake_interrupt_requires_sustained_near_end_speech(self):
+        now = live.time.monotonic()
+        state = {"value": "speaking", "hot_frames": 0, "last_interrupt": 0.0}
+        playback = {
+            "cutoff": False,
+            "barge_in": False,
+            "started_at": now - 1.0,
+            "playing_until": now + 1.0,
+        }
+        speech = array.array("h", [100] * live.AUDIO_SAMPLES).tobytes()
+        for _ in range(live.WAKE_INTERRUPT_HOT_FRAMES - 1):
+            live._maybe_interrupt(speech, state, None, playback)
+        live._maybe_interrupt(speech, state, None, playback, wake_word=True)
         self.assertTrue(playback["cutoff"])
+        self.assertTrue(playback["barge_in"])
 
     def test_new_wake_does_not_cancel_next_turn_during_old_playback_tail(self):
         class Channel:

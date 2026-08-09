@@ -109,6 +109,10 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 
 .pairing-form { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; margin-top: 1.2rem; }
 .pairing-code-input { min-width: 0; font: 700 clamp(1.5rem, 7vw, 2.4rem)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.15em; text-align: center; }
 .device-card, .authenticated-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.device-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.7rem; flex-wrap: wrap; }
+.browser-invite-card { display: grid; gap: 1rem; }
+.browser-invite-card a { color: #9ff5bd; overflow-wrap: anywhere; }
+.invite-code-row { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
 .voice-settings-card { display: grid; grid-template-columns: 1fr minmax(250px, 0.75fr); gap: 1rem; align-items: end; }
 .voice-settings-card p:not(.eyebrow) { margin: 0.55rem 0 0; color: #adb3ad; line-height: 1.5; }
 .voice-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; align-items: end; }

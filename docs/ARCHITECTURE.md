@@ -107,7 +107,9 @@ expiry. The helper prints a one-click `/setup#pairing=…` link, so speaker audi
 and log access are optional.
 
 The browser profile opened to `/setup` receives a distinct HttpOnly pairing
-cookie. It can complete ChatGPT device authorization, approve pending actions,
+cookie. An authenticated control surface can issue a 15-minute code for another
+browser; the registry keeps up to eight hashed browser claims, so adding a phone
+does not sign out the original host browser. It can complete ChatGPT device authorization, approve pending actions,
 select one of the SDK's nine known GPT Live voices, and choose a wake-name
 preset or custom English name. It may run on the host, another computer, a
 phone, or a tablet; it is not an OpenHome-mobile surface. A settings change

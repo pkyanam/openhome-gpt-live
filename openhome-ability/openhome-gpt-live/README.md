@@ -61,7 +61,9 @@ gate.
 The required trigger phrase `gpt live diagnostics` is a one-time firmware-1.0.8
 bootstrap and recovery check. Send it from the OpenHome Activity chat after the
 first Sync/Agent restart; it installs or starts the persistent worker and
-reports status. Normal conversation never uses that trigger.
+reports status. Firmware 1.1.1 supports automatic capability sync and provider
+restart through the host upgrade command. Normal conversation never uses the
+diagnostic trigger.
 
 Disable the Ability and restart the Agent to stop the provider. If default
 audio fails, invoke `audio_devices` in the Ability editor and configure the

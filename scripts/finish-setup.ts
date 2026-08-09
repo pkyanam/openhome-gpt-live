@@ -43,8 +43,10 @@ console.log("   Optional initial wake name:");
 console.log(`   openhome_gpt_live_wake_phrase\n   ${wakePhrase}\n`);
 console.log("2. In My Abilities, install and enable OpenHome GPT Live on the active Agent.");
 console.log("   If it is not already uploaded, use dist/openhome-gpt-live-ability.zip.");
-console.log("3. Tap Sync Abilities, restart the Agent, then send `gpt live diagnostics` once in Activity.");
-console.log(`   That one message bootstraps firmware 1.0.8; normal requests begin with “${wakePhrase}.”\n`);
+console.log("3. Run `bun run ability:prepare-sync` in another terminal.");
+console.log("   Firmware 1.1.1 synchronizes and restarts GPT Live automatically.");
+console.log("   On 1.0.8, tap Sync Abilities, restart the Agent, then send `gpt live diagnostics` once in Activity.");
+console.log(`   Normal requests begin with “${wakePhrase}.”\n`);
 
 if (args.includes("--print-only")) {
   console.log("When those steps are complete, run `bun run finish` to retrieve the pairing link.");
@@ -54,7 +56,7 @@ if (args.includes("--print-only")) {
 const input = !process.stdin.isTTY ? createReadStream("/dev/tty") : process.stdin;
 const prompts = createInterface({ input, output: process.stdout, terminal: true });
 try {
-  await prompts.question("Press Enter after Sync, Restart Agent, and diagnostics are complete… ");
+  await prompts.question("Press Enter after the firmware-appropriate sync and restart are complete… ");
 } finally {
   prompts.close();
   if (input !== process.stdin) input.close();

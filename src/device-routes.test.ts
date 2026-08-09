@@ -93,6 +93,28 @@ describe("headless DevKit routes", () => {
     expect(claimResponse.headers.get("set-cookie")).toContain("Secure");
     expect(await pairingCodes.latest()).toBeUndefined();
 
+    const inviteResponse = await route(new Request("https://service.test/api/pairing/invite", {
+      method: "POST",
+      headers: { cookie: pairingCookie },
+    }));
+    expect(inviteResponse.status).toBe(200);
+    const invite = await inviteResponse.json() as { pairingCode: string; setupUrl: string };
+    expect(invite.pairingCode).toMatch(/^\d{8}$/);
+    expect(invite.setupUrl).toBe("https://voice.example.test/setup");
+
+    const secondClaimResponse = await route(jsonRequest("https://service.test/api/pairing/claim", {
+      method: "POST",
+      body: { code: invite.pairingCode },
+    }));
+    expect(secondClaimResponse.status).toBe(200);
+    const secondPairingCookie = secondClaimResponse.headers.get("set-cookie")!.split(";")[0]!;
+    expect((await route(new Request("https://service.test/api/pairing/session", {
+      headers: { cookie: pairingCookie },
+    }))).status).toBe(200);
+    expect((await route(new Request("https://service.test/api/pairing/session", {
+      headers: { cookie: secondPairingCookie },
+    }))).status).toBe(200);
+
     const sessionResponse = await route(new Request(`${deviceBase}/session`, {
       headers: { authorization: `Bearer ${registration.deviceToken}` },
     }));

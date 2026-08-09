@@ -57,15 +57,21 @@ RECONNECT_BASE_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
 WAKE_PREROLL_FRAMES = 25
 WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
-WAKE_CONFIRM_FRAMES = 5
+WAKE_CONFIRM_FRAMES = 3
+WAKE_CONFIRM_WINDOW_SECONDS = 0.8
 WAKE_SILENCE_RMS = 20.0
 WAKE_SILENCE_FRAMES = 25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
+WAKE_INTERRUPT_MIN_RMS = 25.0
+WAKE_INTERRUPT_HOT_FRAMES = 4
 PLAYBACK_AUDIBLE_RMS = 20.0
 PLAYBACK_UTTERANCE_GAP_SECONDS = 0.6
 PLAYBACK_INTERRUPT_CUTOFF_SECONDS = 1.2
+PLAYBACK_JITTER_BUFFER_FRAMES = 8
+PLAYBACK_FRAME_GAP_WARNING_SECONDS = 0.08
 REQUEST_SPEECH_RMS = 40.0
 REQUEST_END_SILENCE_SECONDS = 0.8
+REQUEST_RESPONSE_TIMEOUT_SECONDS = 15.0
 GPT_LIVE_READY_STATES = {"idle", "connected", "listening", "listening_intently"}
 
 
@@ -406,6 +412,7 @@ async def _run_live_session(client, config, model, stop_event):
         "last_activity": 0.0,
         "last_wake": 0.0,
         "last_user_speech": 0.0,
+        "response_latency_logged": False,
         "phrase": config.get("wake_phrase", DEFAULT_WAKE_PHRASE),
         "idle_seconds": int(config.get("active_idle_seconds", DEFAULT_ACTIVE_IDLE_SECONDS)),
     }
@@ -420,6 +427,9 @@ async def _run_live_session(client, config, model, stop_event):
         "last_frame_at": 0.0,
         "last_audible_at": 0.0,
         "playing_until": 0.0,
+        "last_received_at": 0.0,
+        "last_gap_log_at": 0.0,
+        "frame_gap_count": 0,
     }
     data_channel_holder = {"channel": None}
     seen_data_event_types = set()
@@ -502,6 +512,7 @@ async def _run_live_session(client, config, model, stop_event):
                         wake_state["last_activity"] = now
                         wake_state["last_wake"] = now
                         wake_state["last_user_speech"] = now
+                        wake_state["response_latency_logged"] = False
                         self._pending.extend(self._preroll)
                         self._preroll.clear()
                         data = self._pending.popleft()
@@ -522,9 +533,25 @@ async def _run_live_session(client, config, model, stop_event):
                         )
                     else:
                         data = bytes(AUDIO_BYTES)
-                elif _should_return_to_wake_mode(wake_state, remote_state):
-                    self.arm_for_next_request("the request timeout")
-                    _write_armed_status(config, model, wake_state["phrase"])
+                elif _should_recycle_unresponsive_session(wake_state):
+                    # `/wm` can leave WebRTC and its data channel open after a
+                    # native search while silently refusing every later audio
+                    # turn. Re-arming that transport only creates a permanent
+                    # false-live state. Tear it down after one unanswered,
+                    # authenticated request so the outer worker negotiates a
+                    # fresh Live call and the next wake works again.
+                    self.arm_for_next_request("an unanswered request")
+                    log.warning(
+                        "GPT Live accepted a wake request but produced no response; recycling the stale session"
+                    )
+                    _write_status(
+                        "reconnecting",
+                        message="GPT Live stopped answering and is reconnecting automatically.",
+                        model=model,
+                        voice=config.get("voice", DEFAULT_VOICE),
+                        wake_phrase=wake_state["phrase"],
+                    )
+                    connection_closed.set()
                     data = bytes(AUDIO_BYTES)
                 else:
                     now = time.monotonic()
@@ -663,6 +690,16 @@ async def _run_live_session(client, config, model, stop_event):
             def on_remote_speech_started():
                 if wake_state["active"]:
                     wake_state["assistant_response_seen"] = True
+                    if not wake_state.get("response_latency_logged"):
+                        latency_ms = max(
+                            0.0,
+                            (time.monotonic() - wake_state["last_wake"]) * 1000,
+                        )
+                        log.info(
+                            "GPT Live first audible response arrived %.0f ms after wake",
+                            latency_ms,
+                        )
+                        wake_state["response_latency_logged"] = True
 
             task = asyncio.create_task(_play_remote_audio(
                 track,
@@ -750,9 +787,33 @@ async def _play_remote_audio(
 ):
     process = _open_playback_process(device)
     resampler = AudioResampler(format="s16", layout="mono", rate=AUDIO_RATE)
+    prebuffer = deque()
+    prebuffer_ready = False
     try:
         while True:
             frame = await track.recv()
+            received_at = time.monotonic()
+            previous_received_at = playback_control.get("last_received_at", 0.0)
+            frame_gap = received_at - previous_received_at if previous_received_at else 0.0
+            if (
+                frame_gap >= PLAYBACK_FRAME_GAP_WARNING_SECONDS
+                and received_at - playback_control.get("last_audible_at", 0.0)
+                < PLAYBACK_UTTERANCE_GAP_SECONDS
+            ):
+                playback_control["frame_gap_count"] = (
+                    playback_control.get("frame_gap_count", 0) + 1
+                )
+                if (
+                    received_at - playback_control.get("last_gap_log_at", 0.0)
+                    >= 5.0
+                ):
+                    log.warning(
+                        "GPT Live remote audio frame gap was %.0f ms (total gaps: %s)",
+                        frame_gap * 1000,
+                        playback_control["frame_gap_count"],
+                    )
+                    playback_control["last_gap_log_at"] = received_at
+            playback_control["last_received_at"] = received_at
             for converted in resampler.resample(frame):
                 now = time.monotonic()
                 if (
@@ -762,6 +823,8 @@ async def _play_remote_audio(
                     playback_control["cutoff"] = False
                 if playback_control["cutoff"]:
                     playback_control["playing_until"] = 0.0
+                    prebuffer.clear()
+                    prebuffer_ready = True
                     # Keep the sink input open while discarding cancelled
                     # frames. Destroying paplay here can tear down the
                     # echo-cancel source and make the microphone stream exit.
@@ -771,6 +834,15 @@ async def _play_remote_audio(
                     playback_control["muted"] = False
                 byte_count = converted.samples * 2
                 pcm = bytes(converted.planes[0])[:byte_count]
+                if not prebuffer_ready:
+                    prebuffer.append(pcm)
+                    if len(prebuffer) < PLAYBACK_JITTER_BUFFER_FRAMES:
+                        continue
+                    chunks = tuple(prebuffer)
+                    prebuffer.clear()
+                    prebuffer_ready = True
+                else:
+                    chunks = (pcm,)
                 audible = _pcm_rms(pcm) >= PLAYBACK_AUDIBLE_RMS
                 if audible and now - playback_control.get(
                     "last_audible_at", 0.0
@@ -784,7 +856,8 @@ async def _play_remote_audio(
                     playback_control["playing_until"] = now + 0.2
                 if process is None:
                     process = _open_playback_process(device)
-                await asyncio.to_thread(process.stdin.write, pcm)
+                for chunk in chunks:
+                    await asyncio.to_thread(process.stdin.write, chunk)
     finally:
         if playback_control["muted"]:
             _set_playback_muted(False)
@@ -912,13 +985,29 @@ def _device_settings_path(config):
 
 
 def _ensure_worker_started():
+    runtime_changed = _stage_worker_runtime()
     pid = _read_worker_pid()
-    if pid and _is_our_worker(pid):
+    unit_current = (
+        SERVICE_FILE.exists()
+        and SERVICE_FILE.read_text(encoding="utf-8") == _service_unit_text()
+    )
+    service_active = (
+        os.name == "posix"
+        and bool(shutil.which("systemctl"))
+        and subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", SERVICE_NAME],
+            timeout=10,
+            check=False,
+        ).returncode == 0
+    )
+    if pid and _is_our_worker(pid) and service_active and not runtime_changed and unit_current:
         return False
     PID_FILE.unlink(missing_ok=True)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        if _install_and_start_boot_service():
+        if _install_and_start_boot_service(
+            force_restart=bool(pid and _is_our_worker(pid) and service_active)
+        ):
             return True
     except Exception:
         # Older/non-systemd development environments can still use the
@@ -926,7 +1015,7 @@ def _ensure_worker_started():
         log.exception("Could not start GPT Live through the boot service")
     log_handle = open(WORKER_LOG_FILE, "ab", buffering=0)
     process = subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "_worker"],
+        [sys.executable, str(_runtime_worker_file()), "_worker"],
         stdin=subprocess.DEVNULL,
         stdout=log_handle,
         stderr=log_handle,
@@ -940,13 +1029,38 @@ def _ensure_worker_started():
     return True
 
 
-def _install_and_start_boot_service():
+def _stage_worker_runtime():
+    """Keep the boot worker outside OpenHome's firmware-managed code tree."""
+    source = Path(__file__).resolve()
+    target = _runtime_worker_file()
+    source_bytes = source.read_bytes()
+    if target.exists() and target.read_bytes() == source_bytes:
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(f".py.{os.getpid()}.tmp")
+    temporary.write_bytes(source_bytes)
+    os.chmod(temporary, 0o600)
+    temporary.replace(target)
+    return True
+
+
+def _runtime_worker_file():
+    return STATE_DIR / "runtime" / "devkit_functions.py"
+
+
+def _install_and_start_boot_service(force_restart=False):
     """Install a persistent per-user service and start it immediately."""
     if os.name != "posix" or not shutil.which("systemctl"):
         return False
     SERVICE_FILE.parent.mkdir(parents=True, exist_ok=True)
     unit = _service_unit_text()
-    if not SERVICE_FILE.exists() or SERVICE_FILE.read_text(encoding="utf-8") != unit:
+    unit_changed = not SERVICE_FILE.exists() or SERVICE_FILE.read_text(encoding="utf-8") != unit
+    was_active = subprocess.run(
+        ["systemctl", "--user", "is-active", "--quiet", SERVICE_NAME],
+        timeout=10,
+        check=False,
+    ).returncode == 0
+    if unit_changed:
         temporary = SERVICE_FILE.with_suffix(f".service.{os.getpid()}.tmp")
         temporary.write_text(unit, encoding="utf-8")
         os.chmod(temporary, 0o644)
@@ -965,6 +1079,14 @@ def _install_and_start_boot_service():
         timeout=20,
         check=True,
     )
+    if was_active and (force_restart or unit_changed):
+        subprocess.run(
+            ["systemctl", "--user", "restart", SERVICE_NAME],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        )
     return subprocess.run(
         ["systemctl", "--user", "is-active", "--quiet", SERVICE_NAME],
         timeout=10,
@@ -992,7 +1114,7 @@ def _disable_boot_service():
 
 
 def _service_unit_text():
-    worker = Path(__file__).resolve()
+    worker = _runtime_worker_file()
     return (
         "[Unit]\n"
         "Description=OpenHome GPT Live voice provider\n"
@@ -1027,7 +1149,11 @@ def _is_our_worker(pid):
         return False
     try:
         command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8")
-        return str(Path(__file__).resolve()) in command and "_worker" in command
+        worker_paths = {
+            str(Path(__file__).resolve()),
+            str(_runtime_worker_file().resolve()),
+        }
+        return any(path in command for path in worker_paths) and "_worker" in command
     except (FileNotFoundError, PermissionError, ProcessLookupError):
         return False
 
@@ -1239,6 +1365,7 @@ class WakePhraseDetector:
             if grammar_path:
                 Path(grammar_path).unlink(missing_ok=True)
         self._confirmation_frames = 0
+        self._confirmation_deadline = 0.0
         self._quiet_frames = 0
         self._frames_seen = 0
         self._decoder.start_utt()
@@ -1247,6 +1374,7 @@ class WakePhraseDetector:
         self._decoder.end_utt()
         self._decoder.start_utt()
         self._confirmation_frames = 0
+        self._confirmation_deadline = 0.0
         self._quiet_frames = 0
 
     def process(self, pcm_48k):
@@ -1267,20 +1395,30 @@ class WakePhraseDetector:
         pcm_16k = _downsample_48k_to_16k(pcm_48k)
         self._decoder.process_raw(pcm_16k, False, False)
         hypothesis = self._decoder.hyp()
-        if hypothesis is None:
-            self._confirmation_frames = 0
-            return False
-        heard = hypothesis.hypstr.strip().lower()
+        now = time.monotonic()
+        heard = hypothesis.hypstr.strip().lower() if hypothesis is not None else None
+        score = float(getattr(hypothesis, "best_score", 0.0)) if hypothesis is not None else 0.0
         previous_confirmation_frames = self._confirmation_frames
-        self._confirmation_frames, confirmed = _advance_wake_confirmation(
+        (
             self._confirmation_frames,
+            self._confirmation_deadline,
+            confirmed,
+        ) = _advance_wake_confirmation(
+            self._confirmation_frames,
+            self._confirmation_deadline,
             heard,
-            float(getattr(hypothesis, "best_score", 0.0)),
+            score,
             self._aliases,
+            now,
         )
         if previous_confirmation_frames == 0 and self._confirmation_frames == 1:
-            log.info("GPT Live wake candidate: %s (score %.3f)", heard, hypothesis.best_score)
+            log.info("GPT Live wake candidate: %s (score %.3f)", heard, score)
         if confirmed:
+            confirmation_ms = max(
+                0.0,
+                (now - (self._confirmation_deadline - WAKE_CONFIRM_WINDOW_SECONDS)) * 1000,
+            )
+            log.info("GPT Live wake phrase confirmed in %.0f ms", confirmation_ms)
             self.reset()
         return confirmed
 
@@ -1293,13 +1431,28 @@ def _wake_phrase_aliases(phrase):
     return (normalized,)
 
 
-def _advance_wake_confirmation(frame_count, heard, score, aliases):
+def _advance_wake_confirmation(frame_count, deadline, heard, score, aliases, now):
+    """Confirm exact wake hits while tolerating short decoder dropouts.
+
+    PocketSphinx can briefly return no hypothesis between correct frames,
+    especially for short custom names. A blank frame therefore preserves the
+    candidate only inside a tightly bounded window. A wrong or low-confidence
+    hypothesis still resets immediately so room audio cannot accumulate hits
+    over time.
+    """
+    if deadline and now > deadline:
+        frame_count = 0
+        deadline = 0.0
+    if heard is None:
+        return frame_count, deadline, False
     if heard not in aliases or score < WAKE_GRAMMAR_SCORE_THRESHOLD:
-        return 0, False
+        return 0, 0.0, False
+    if frame_count == 0:
+        deadline = now + WAKE_CONFIRM_WINDOW_SECONDS
     frame_count += 1
     if frame_count < WAKE_CONFIRM_FRAMES:
-        return frame_count, False
-    return 0, True
+        return frame_count, deadline, False
+    return 0, deadline, True
 
 
 def _advance_wake_silence(frame_count, pcm):
@@ -1336,11 +1489,15 @@ def _downsample_48k_to_16k(data):
     return downsampled.tobytes()
 
 
-def _should_return_to_wake_mode(wake_state, remote_state, now=None):
-    if not wake_state["active"]:
+def _should_recycle_unresponsive_session(wake_state, now=None):
+    if not wake_state["active"] or wake_state.get("assistant_response_seen"):
         return False
     now = time.monotonic() if now is None else now
-    return now - wake_state["last_activity"] >= wake_state["idle_seconds"]
+    configured_timeout = float(
+        wake_state.get("idle_seconds", REQUEST_RESPONSE_TIMEOUT_SECONDS)
+    )
+    timeout = min(configured_timeout, REQUEST_RESPONSE_TIMEOUT_SECONDS)
+    return now - wake_state["last_activity"] >= timeout
 
 
 def _should_arm_after_response_audio(wake_state, playback_control, now=None):
@@ -1381,6 +1538,7 @@ def _reset_wake_gate(
     was_active = wake_state["active"]
     wake_state["active"] = False
     wake_state["assistant_response_seen"] = False
+    wake_state["response_latency_logged"] = False
     playback_control["barge_in"] = False
     pending.clear()
     preroll.clear()
@@ -1412,14 +1570,26 @@ def _maybe_interrupt(data, state, channel, playback_control=None, wake_word=Fals
     if not _output_is_playing(state, playback_control, now):
         state["hot_frames"] = 0
         return
+    rms = _pcm_rms(data)
+    if rms >= WAKE_INTERRUPT_MIN_RMS:
+        state["hot_frames"] = min(
+            WAKE_INTERRUPT_HOT_FRAMES,
+            state.get("hot_frames", 0) + 1,
+        )
+    else:
+        state["hot_frames"] = 0
     # Every request requires the wake phrase. Using raw volume here caused the
     # AEC's tiny far-end residual to interrupt Juniper's own response and close
     # the capture stream. A fresh offline wake-word detection is deterministic
     # and remains usable even when double-talk attenuation makes speech quiet.
     if not wake_word:
-        state["hot_frames"] = 0
         return
-    rms = _pcm_rms(data)
+    if state.get("hot_frames", 0) < WAKE_INTERRUPT_HOT_FRAMES:
+        log.info(
+            "Ignored likely echo wake-to-interrupt at %.1f RMS without sustained near-end speech",
+            rms,
+        )
+        return
     if now - state["last_interrupt"] >= 0.8:
         if playback_control is not None:
             playback_control["cutoff"] = True

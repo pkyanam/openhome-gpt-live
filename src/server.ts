@@ -99,7 +99,11 @@ auth = createChatGPTHandler({
       searchAcknowledgement:
         "I’m searching OpenAI now. You can keep talking while I check.",
       executeSearch: ({ request, transcript }) => executeSubscriptionSearch(request, transcript),
-      routeHandoff: routeVoiceRequest,
+      routeHandoff: (transcript) => {
+        const destination = routeVoiceRequest(transcript);
+        console.log(`GPT Live routed a request to ${destination}.`);
+        return destination;
+      },
       executionInstructions:
         "You are the execution side of an OpenHome realtime voice assistant. " +
         "Native GPT Live owns ordinary conversation, memory, and general knowledge. The OpenHome bridge intercepts " +
@@ -121,8 +125,9 @@ auth = createChatGPTHandler({
         "After finishing, call speak_to_user exactly once with a concise spoken result.",
       realtimePrompt:
         "You are an OpenHome voice assistant. Keep responses concise, natural, and interruptible. " +
-        "Use GPT Live directly for ordinary conversation, general knowledge, and memory. For current information " +
-        "or internet/web searches, create a native backend handoff; the OpenHome bridge will run OpenAI's first-party " +
+        "Use GPT Live directly for ordinary conversation, general knowledge, and memory. For current information, " +
+        "live market data (including Bitcoin or other asset prices), or internet/web searches, always create a native " +
+        "backend handoff instead of answering from memory; the OpenHome bridge will run OpenAI's first-party " +
         "web search and speak the result without starting Codex. Answer current date, day, time, and timezone " +
         "questions directly through the realtime session's live current-time provider. Never use a stale startup " +
         "timestamp or elapsed-time estimate. Never hand off a clock question, never say you are checking it, and " +
@@ -162,7 +167,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.1" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.3" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),
@@ -242,27 +247,38 @@ async function executeSubscriptionSearch(request: Request, transcript: string): 
   if (cookie) headers.set("cookie", cookie);
   headers.set("content-type", "application/json");
   headers.set("accept", "text/event-stream");
-  const response = await auth.handler(new Request(target, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model,
-      stream: true,
-      instructions:
-        "You are the web-search sidecar for an OpenHome GPT Live speaker. Always use the supplied web_search tool " +
-        "for this request. Return a concise, speech-friendly answer with the important current facts. Name one or " +
-        "two sources when useful, but do not read URLs aloud and do not use Markdown tables.",
-      input: [{
-        role: "user",
-        content: [{ type: "input_text", text: transcript }],
-      }],
-      tools: [{ type: "web_search" }],
-      tool_choice: "auto",
-    }),
-  }));
-  const body = await response.text();
-  if (!response.ok) {
-    throw new Error(`OpenAI subscription search failed (${response.status}): ${body.slice(0, 500)}`);
+  headers.set("x-login-with-chatgpt-service-tier", "fast");
+  const startedAt = Date.now();
+  try {
+    const response = await auth.handler(new Request(target, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        stream: true,
+        instructions:
+          `You are the hosted web-search provider for an OpenHome voice turn. The local date and time is ${new Date().toLocaleString("en-US", { timeZoneName: "short" })}. ` +
+          "Always search the live web before answering. Return a concise, speech-friendly answer with the important " +
+          "current facts. Name one or two sources when useful, but do not read URLs aloud and do not use Markdown tables.",
+        input: [{
+          role: "user",
+          content: [{ type: "input_text", text: transcript }],
+        }],
+        tools: [{ type: "web_search", search_context_size: "low" }],
+        tool_choice: "required",
+      }),
+    }));
+    const body = await response.text();
+    if (!response.ok) {
+      throw new Error(`OpenAI subscription search failed (${response.status}): ${body.slice(0, 500)}`);
+    }
+    const result = parseOpenAISearchEvents(body);
+    console.log(`OpenAI hosted web search completed in ${Date.now() - startedAt} ms.`);
+    return result;
+  } catch (error) {
+    console.error(
+      `OpenAI hosted web search failed after ${Date.now() - startedAt} ms: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    throw error;
   }
-  return parseOpenAISearchEvents(body);
 }

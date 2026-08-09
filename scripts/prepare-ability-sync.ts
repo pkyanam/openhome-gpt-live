@@ -16,7 +16,13 @@ const abilityDir = "/home/openhome/openhome_devkit/local_capabilities/openhome_g
 const command = `
 set -eu
 systemctl --user stop openhome-gpt-live.service || true
-if [ -d ${abilityDir} ]; then
+if [ -f /home/openhome/openhome_devkit/devkit_cmd.py ]; then
+  cd /home/openhome/openhome_devkit
+  python3 devkit_cmd.py sync-capabilities 2>&1 | sed -E 's/API_KEY=[^, ]*/API_KEY=[redacted]/g'
+  test -f ${abilityDir}/devkit_functions.py
+  python3 -c 'import sys; sys.path.insert(0, "${abilityDir}"); import devkit_functions as worker; worker._stage_worker_runtime(); worker._install_and_start_boot_service()'
+  echo __OPENHOME_AUTO_SYNCED__
+elif [ -d ${abilityDir} ]; then
   backup="${abilityDir}.upgrade-backup-$(date +%Y%m%d%H%M%S)"
   mv ${abilityDir} "$backup"
   echo "Archived cached Ability at $backup"
@@ -30,9 +36,10 @@ const socket = new WebSocket(
 );
 let commandSent = false;
 let settled = false;
+let automaticSync = false;
 const timeout = setTimeout(
   () => finish(2, "Timed out waiting for the OpenHome DevKit."),
-  20_000,
+  300_000,
 );
 
 socket.addEventListener("open", () => socket.send("frontend"));
@@ -54,10 +61,16 @@ socket.addEventListener("message", (event) => {
   if (!data || typeof data !== "object" || Array.isArray(data)) return;
   const frame = data as Record<string, unknown>;
   if (frame["type"] === "output" && typeof frame["result"] === "string") {
-    process.stdout.write(frame["result"]);
-    if (!frame["result"].endsWith("\n")) process.stdout.write("\n");
+    const output = frame["result"];
+    if (output.includes("__OPENHOME_AUTO_SYNCED__")) automaticSync = true;
+    const visible = output.replaceAll("__OPENHOME_AUTO_SYNCED__", "").trimEnd();
+    if (visible) process.stdout.write(`${visible}\n`);
   } else if (frame["type"] === "completed") {
-    console.log("Reconnect the DevKit in OpenHome, tap Sync Abilities, then Restart Agent.");
+    console.log(
+      automaticSync
+        ? "The DevKit synchronized the Ability and restarted GPT Live automatically."
+        : "Reconnect the DevKit in OpenHome, tap Sync Abilities, then Restart Agent.",
+    );
     finish(0);
   }
 });

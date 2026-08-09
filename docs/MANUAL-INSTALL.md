@@ -32,11 +32,11 @@ Start the guided OpenHome and pairing handoff with:
 bun run finish
 ```
 
-It prints both exact keys, then waits while you link them, install and enable
-the Ability, tap **Sync Abilities**, restart the Agent, and send `gpt live
-diagnostics` once in Activity. Firmware 1.0.8 does not reliably invoke a Local
-Ability background provider on Agent restart; this one-time diagnostic call
-installs and starts the persistent systemd worker. It is not a normal
+It prints both exact keys, then waits while you link them and install and enable
+the Ability. Firmware 1.1.1 can synchronize the Ability automatically after
+upload. Firmware 1.0.8 asks you to tap **Sync Abilities**, restart the Agent,
+and send `gpt live diagnostics` once in Activity. That one-time diagnostic call
+installs and starts the persistent systemd worker; it is not a normal
 conversation launch phrase.
 
 ## Retrieve the pairing code
@@ -76,19 +76,19 @@ the files at the ZIP root, unlike its new-Ability upload. Do not delete a
 working Ability to upgrade it; an installed record can otherwise point to the
 removed object.
 
-Firmware 1.0.8 may retain the old local directory even after the cloud release
-is updated. Before dashboard Sync, run:
+After uploading either release format, run:
 
 ```bash
 bun run ability:prepare-sync
 ```
 
-This stops GPT Live and renames only its cached DevKit Ability folder to a
-timestamped backup. Reconnect the DevKit in the dashboard afterward.
-
-After an Ability upgrade, tap **Sync Abilities** and **Restart Agent**. If the
-worker service is absent or inactive, send `gpt live diagnostics` once in
-Activity. Host-only documentation or UI changes do not require a speaker sync.
+On firmware 1.1.1, this runs the device-native capability sync, stages the boot
+worker in persistent user state, and restarts GPT Live. On firmware 1.0.8, it
+stops GPT Live and renames only its cached Ability folder to a timestamped
+backup; reconnect the DevKit, tap **Sync Abilities**, and restart the Agent.
+If the older firmware's worker is absent or inactive, send `gpt live
+diagnostics` once in Activity. Host-only documentation or UI changes do not
+require a speaker sync.
 
 ## Change configuration
 

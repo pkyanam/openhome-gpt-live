@@ -81,6 +81,12 @@ links, Ability installation, Sync Abilities, and Restart Agent in that order.
 Codes expire after 15 minutes. Restart the Agent to request another one. The
 local inbox is mode 0600 and deletes a code when it is paired or expires.
 
+If one browser is already paired, open `/setup` there and choose **Pair another
+browser**. Enter the displayed code on the phone, tablet, or second computer.
+Browser pairing uses a signed HttpOnly cookie per browser profile; ChatGPT
+authorization and device credentials remain server-side, and existing paired
+browsers are not signed out.
+
 ## The ChatGPT authorization code is missing
 
 The eight-digit OpenHome pairing code comes first. After the browser is paired,
@@ -117,6 +123,19 @@ then the result is spoken through GPT Live. Local Codex is not involved.
 After upgrading, update the same Ability object in place, tap **Sync Abilities**,
 and **Restart Agent**. On `/setup`, a successful request should show **Last
 routed request: OpenAI web search** while Codex remains idle.
+
+## The first request works, then later wake requests receive no answer
+
+Upgrade the host and Ability to **0.3.2 or newer**. Some `/wm` calls remain
+nominally connected after a native search while silently refusing later audio
+turns. The DevKit now detects one authenticated request with no assistant audio,
+marks the session `reconnecting`, and negotiates a fresh call automatically.
+Pairing, ChatGPT authorization, voice, and wake-name settings are preserved.
+
+If a request receives no answer, wait roughly twenty seconds for `/setup` to
+return to `live`, then say the wake name and request once more. A persistent
+named tunnel is recommended when Quick Tunnel logs also show intermittent 502
+responses.
 
 ## Codex finishes silently or mixes requests
 
@@ -216,8 +235,15 @@ default pipeline answer ambient speech.
 
 ## Firmware version
 
-The integration has been exercised on OpenHome firmware 1.0.8. Firmware 1.1.0
-is not a prerequisite. On 1.0.8, Local Ability background providers are not
-reliably invoked by Agent restart, so use the one-time Activity diagnostic to
-bootstrap the enabled systemd worker. Do not reflash solely for this project
-when 1.0.8 is otherwise healthy.
+The integration has been physically exercised on OpenHome firmware 1.0.8 and
+1.1.1. On 1.0.8, Local Ability background providers are not reliably invoked by
+Agent restart, so use the one-time Activity diagnostic to bootstrap the enabled
+systemd worker. Firmware 1.1.1 adds a device-native capability-sync command,
+which `bun run ability:prepare-sync` uses automatically.
+
+A firmware replacement may remove the firmware-managed Local Ability directory.
+Version 0.3.3 stages the persistent boot worker under
+`~/.local/share/openhome-gpt-live/runtime`, so the provider no longer depends on
+that replaceable path. Run `bun run upload:ability` followed by
+`bun run ability:prepare-sync` to restore or upgrade the cloud Ability after a
+firmware change.

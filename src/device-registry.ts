@@ -4,6 +4,7 @@ import { JsonFileStore } from "./file-store.ts";
 const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PAIRING_TTL_MS = 15 * 60 * 1000;
 const MAX_PENDING_CONFIRMATIONS = 20;
+const MAX_PAIRED_BROWSERS = 8;
 
 export type DeviceLoginStatus =
   | "unauthenticated"
@@ -24,7 +25,9 @@ export interface DeviceRecord {
   deviceTokenHash: string;
   pairingCodeHash?: string;
   pairingExpiresAt?: number;
+  /** Legacy single-browser claim. Migrated when another browser pairs. */
   claimTokenHash?: string;
+  claimTokenHashes?: string[];
   lwcCookie?: string;
   loginStatus: DeviceLoginStatus;
   loginUser?: { email?: string; name?: string; plan?: string };
@@ -102,7 +105,7 @@ export class DeviceRegistry {
           if (!record.wakePhrase) record.wakePhrase = initialWakePhrase;
         });
       }
-      const pairing = existing.claimTokenHash ? undefined : await this.issuePairing(existing.id);
+      const pairing = hasBrowserClaim(existing) ? undefined : await this.issuePairing(existing.id);
       return {
         record: (await this.get(existing.id))!,
         deviceToken: resume.deviceToken,
@@ -188,7 +191,11 @@ export class DeviceRegistry {
       ) {
         throw new Error("Pairing code is invalid or expired.");
       }
-      current.claimTokenHash = this.hash("claim", claimToken);
+      const nextClaimHash = this.hash("claim", claimToken);
+      const existingClaims = browserClaimHashes(current);
+      current.claimTokenHashes = [...new Set([...existingClaims, nextClaimHash])]
+        .slice(-MAX_PAIRED_BROWSERS);
+      delete current.claimTokenHash;
       delete current.pairingCodeHash;
       delete current.pairingExpiresAt;
     });
@@ -199,7 +206,8 @@ export class DeviceRegistry {
     const parsed = parseClaimCookie(cookieValue);
     if (!parsed) throw new Error("Pairing session is not authenticated.");
     const record = await this.get(parsed.deviceId);
-    if (!record?.claimTokenHash || !safeEqual(record.claimTokenHash, this.hash("claim", parsed.token))) {
+    const targetHash = this.hash("claim", parsed.token);
+    if (!record || !browserClaimHashes(record).some((claimHash) => safeEqual(claimHash, targetHash))) {
       throw new Error("Pairing session is not authenticated.");
     }
     return record;
@@ -287,7 +295,7 @@ export class DeviceRegistry {
     return {
       deviceId: record.id,
       name: record.name,
-      paired: Boolean(record.claimTokenHash),
+      paired: hasBrowserClaim(record),
       loginStatus: record.loginStatus,
       ...(record.loginUser ? { loginUser: record.loginUser } : {}),
       ...(record.userCode ? { userCode: record.userCode } : {}),
@@ -351,6 +359,17 @@ function safeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function browserClaimHashes(record: DeviceRecord): string[] {
+  return [
+    ...(record.claimTokenHashes ?? []),
+    ...(record.claimTokenHash ? [record.claimTokenHash] : []),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function hasBrowserClaim(record: DeviceRecord): boolean {
+  return browserClaimHashes(record).length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

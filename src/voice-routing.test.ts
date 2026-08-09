@@ -6,6 +6,8 @@ describe("speaker voice routing", () => {
     expect(routeVoiceRequest("search the web for today's OpenHome news")).toBe("openai_search");
     expect(routeVoiceRequest("look up the latest release tag")).toBe("openai_search");
     expect(routeVoiceRequest("what is the weather in Scranton right now")).toBe("openai_search");
+    expect(routeVoiceRequest("what is the Bitcoin price")).toBe("openai_search");
+    expect(routeVoiceRequest("look up Bitcoin pricing")).toBe("openai_search");
   });
 
   test("keeps local mutations in Codex even when research is involved", () => {

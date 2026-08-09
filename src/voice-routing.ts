@@ -17,6 +17,7 @@ const EXPLICIT_WEB = [
 const CURRENT_INFORMATION = [
   /\b(?:latest|breaking|recent|today(?:'s)?|right\s+now|currently)\b/i,
   /\b(?:news|weather|forecast|score|standings|schedule|stock|share\s+price|release\s+tag)\b/i,
+  /\b(?:price|prices|pricing|quote|market\s+price|market\s+cap|exchange\s+rate)\b/i,
 ];
 
 /** Local actions win; otherwise current-information requests use OpenAI search. */

@@ -64,8 +64,8 @@ That replaces the former page-long agent prompt. After cloning, Codex can load
 
 ## What you need
 
-- An onboarded OpenHome DevKit with Local Abilities. Firmware **1.0.8 is
-  physically tested**; 1.1.0 is not required.
+- An onboarded OpenHome DevKit with Local Abilities. Firmware **1.0.8 and
+  1.1.1 are physically tested**.
 - A ChatGPT subscription with GPT Live access.
 - A macOS or Linux host that stays online.
 - A stable public HTTPS origin before production use.
@@ -98,8 +98,10 @@ steps the host cannot perform for you:
 1. Link the printed server URL and bootstrap token to **OpenHome GPT Live**.
 2. Install and enable the Local Ability. Without API automation, upload
    `dist/openhome-gpt-live-ability.zip`.
-3. Tap **Sync Abilities**, restart the Agent, and send `gpt live diagnostics`
-   once in Activity to bootstrap firmware 1.0.8.
+3. Run `bun run ability:prepare-sync` after installation. Firmware 1.1.1 then
+   synchronizes and restarts GPT Live automatically. Firmware 1.0.8 asks you to
+   tap **Sync Abilities**, restart the Agent, and send `gpt live diagnostics`
+   once in Activity.
 4. Press Enter in the wizard. It retrieves the DevKit pairing code from the
    host—speaker audio and raw log inspection are not required.
 5. Open the printed `/setup` link in any trusted browser and complete Login with
@@ -109,6 +111,12 @@ steps the host cannot perform for you:
 The browser is a setup/control surface served by this bridge. It can be on the
 host, another computer, a phone, or a tablet; it is **not** embedded in the
 OpenHome mobile app, and speaker audio never passes through it.
+
+Pairing is per browser profile because the setup session uses a signed,
+HttpOnly cookie. ChatGPT and DevKit credentials remain server-side. From any
+already paired `/setup` page, choose **Pair another browser** to create a
+15-minute code for a phone, tablet, or second computer; existing browsers stay
+paired.
 
 ## Installer examples
 
@@ -210,15 +218,17 @@ bun run tunnel -- status
 curl http://127.0.0.1:3000/healthz
 ```
 
-For a firmware 1.0.8 Ability code update:
+For an Ability code update:
 
 ```bash
 bun run ability:prepare-sync
 ```
 
-Reconnect the DevKit, tap **Sync Abilities**, and restart the Agent. This only
-archives the cached GPT Live folder; it does not delete the cloud Ability,
-pairing, or host state.
+On firmware 1.1.1, this uses OpenHome's device-native capability sync and
+restarts GPT Live automatically. Firmware 1.0.8 falls back to archiving the
+cached Ability; reconnect the DevKit, tap **Sync Abilities**, and restart the
+Agent. Neither path deletes the cloud Ability, pairing, ChatGPT authorization,
+or host state.
 
 - [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
 - [Manual setup and upgrades](docs/MANUAL-INSTALL.md)

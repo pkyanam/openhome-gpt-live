@@ -13,6 +13,7 @@ export function parseOpenAISearchEvents(body: string): string {
     if (event["type"] === "response.output_text.done" && typeof event["text"] === "string") {
       result = event["text"] as string;
     }
+    if (event["type"] === "response.web_search_call.completed") usedSearch = true;
     if (event["type"] === "response.completed") {
       const response = isRecord(event["response"]) ? event["response"] : undefined;
       const usage = response && isRecord(response["tool_usage"]) ? response["tool_usage"] : undefined;

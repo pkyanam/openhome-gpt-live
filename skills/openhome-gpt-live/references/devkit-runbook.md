@@ -2,7 +2,7 @@
 
 ## Supported topology
 
-- Official OpenHome DevKit; firmware 1.0.8 is physically tested.
+- Official OpenHome DevKit; firmware 1.0.8 and 1.1.1 are physically tested.
 - A macOS or Linux host runs the HTTPS bridge and Codex tools.
 - The DevKit runs the Local Ability, configurable offline wake gate, WebRTC audio,
   and acoustic echo cancellation.
@@ -15,8 +15,9 @@
   at ZIP root).
 - With `OPENHOME_API_KEY`, use `bun run upload:ability` to preserve the Ability
   id and linked Third Party Keys.
-- Firmware 1.0.8 upgrade: run `bun run ability:prepare-sync`, reconnect the
-  dashboard, Sync Abilities, and restart the Agent.
+- Run `bun run ability:prepare-sync` after an Ability upload. Firmware 1.1.1
+  uses its device-native capability sync and restarts the provider
+  automatically; firmware 1.0.8 asks for dashboard Sync and Agent restart.
 - If the background provider did not start, send `gpt live diagnostics` once in
   Activity. It is a firmware bootstrap, not a normal voice launch phrase.
 

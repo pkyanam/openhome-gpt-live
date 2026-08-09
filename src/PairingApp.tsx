@@ -35,6 +35,12 @@ interface PairedSession {
   lastSeenAt: number;
 }
 
+interface PairingInvite {
+  pairingCode: string;
+  setupUrl: string;
+  expiresAt?: number;
+}
+
 export function PairingApp() {
   const [code, setCode] = useState(() => formatPairingCode(
     new URLSearchParams(window.location.hash.slice(1)).get("pairing") ?? "",
@@ -44,8 +50,10 @@ export function PairingApp() {
   const [wakePhrase, setWakePhrase] = useState("juniper");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [pairingInvite, setPairingInvite] = useState<PairingInvite>();
   const [awaitingSettings, setAwaitingSettings] = useState<{
     voice: ChatGPTRealtimeVoice;
     wakePhrase: string;
@@ -162,6 +170,26 @@ export function PairingApp() {
     }
   }
 
+  async function createPairingInvite() {
+    setCreatingInvite(true);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/pairing/invite", {
+        method: "POST",
+        credentials: "include",
+      });
+      const payload = await response.json() as PairingInvite & { message?: string };
+      if (!response.ok || !payload.pairingCode || !payload.setupUrl) {
+        throw new Error(payload.message ?? "Could not create a browser pairing code.");
+      }
+      setPairingInvite(payload);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setCreatingInvite(false);
+    }
+  }
+
   async function confirm(callId: string, approved: boolean) {
     setSubmitting(true);
     setError(undefined);
@@ -229,10 +257,34 @@ export function PairingApp() {
               <p className="eyebrow">PAIRED DEVICE</p>
               <h2>{session.name}</h2>
             </div>
-            <div className={`connection-pill connection-${session.connectionState ?? session.loginStatus}`}>
-              {session.connectionState ?? session.loginStatus}
+            <div className="device-actions">
+              <div className={`connection-pill connection-${session.connectionState ?? session.loginStatus}`}>
+                {session.connectionState ?? session.loginStatus}
+              </div>
+              <button type="button" disabled={creatingInvite} onClick={() => void createPairingInvite()}>
+                {creatingInvite ? "Creating code…" : "Pair another browser"}
+              </button>
             </div>
           </section>
+
+          {pairingInvite && (
+            <section className="pairing-card browser-invite-card" role="status">
+              <div className="section-heading">
+                <p className="eyebrow">PAIR ANOTHER BROWSER</p>
+                <h2>Enter this code on the other phone, tablet, or computer.</h2>
+                <p>
+                  Open <a href={pairingInvite.setupUrl}>{pairingInvite.setupUrl}</a>. This code expires
+                  {pairingInvite.expiresAt ? ` at ${new Date(pairingInvite.expiresAt).toLocaleTimeString()}` : " in 15 minutes"}.
+                  Existing paired browsers stay connected.
+                </p>
+              </div>
+              <div className="invite-code-row">
+                <strong className="user-code">{formatPairingCode(pairingInvite.pairingCode)}</strong>
+                <button type="button" onClick={() => void navigator.clipboard.writeText(pairingInvite.pairingCode)}>Copy code</button>
+                <button type="button" onClick={() => setPairingInvite(undefined)}>Done</button>
+              </div>
+            </section>
+          )}
 
           <section className="pairing-card voice-settings-card">
             <div>

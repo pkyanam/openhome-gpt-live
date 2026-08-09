@@ -160,6 +160,28 @@ export function createDeviceRoutes(options: DeviceRoutesOptions) {
       }
     }
 
+    if (path === "/api/pairing/invite" && request.method === "POST") {
+      try {
+        const record = await authenticatePairingRequest(options.registry, request);
+        const pairingCode = await options.registry.issuePairing(record.id);
+        const setupUrl = `${resolvePublicBaseUrl(request, options.publicBaseUrl)}/setup`;
+        await options.pairingCodes?.record({
+          deviceId: record.id,
+          deviceName: record.name,
+          code: pairingCode,
+          setupUrl,
+        });
+        const updated = await options.registry.get(record.id);
+        return json({
+          pairingCode,
+          setupUrl,
+          expiresAt: updated?.pairingExpiresAt,
+        });
+      } catch {
+        return json({ error: "pairing_not_authenticated" }, { status: 401 });
+      }
+    }
+
     if (
       (path === "/api/pairing/settings" || path === "/api/pairing/voice")
       && request.method === "POST"

@@ -34,6 +34,12 @@ describe("DeviceRegistry", () => {
     expect((await registry.authenticateClaim(cookie)).id).toBe(registration.record.id);
     await expect(registry.claim(registration.pairingCode!)).rejects.toThrow("invalid or expired");
 
+    const secondCode = await registry.issuePairing(registration.record.id);
+    const secondClaim = await registry.claim(secondCode);
+    const secondCookie = pairingCookieValue(secondClaim.record.id, secondClaim.claimToken);
+    expect((await registry.authenticateClaim(cookie)).id).toBe(registration.record.id);
+    expect((await registry.authenticateClaim(secondCookie)).id).toBe(registration.record.id);
+
     const resumed = await registry.register("ignored", {
       deviceId: registration.record.id,
       deviceToken: registration.deviceToken,
