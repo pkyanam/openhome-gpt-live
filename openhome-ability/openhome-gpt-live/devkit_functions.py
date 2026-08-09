@@ -61,6 +61,7 @@ WAKE_CONFIRM_FRAMES = 3
 WAKE_SILENCE_RMS = 20.0
 WAKE_SILENCE_FRAMES = 25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
+WAKE_INTERRUPT_MIN_RMS = 120.0
 PLAYBACK_AUDIBLE_RMS = 20.0
 PLAYBACK_UTTERANCE_GAP_SECONDS = 0.6
 PLAYBACK_INTERRUPT_CUTOFF_SECONDS = 1.2
@@ -463,8 +464,21 @@ async def _run_live_session(client, config, model, stop_event):
 
                 if not wake_state["active"]:
                     self._preroll.append(data)
-                    if self._wake_detector.process(data):
-                        now = time.monotonic()
+                    wake_detected = self._wake_detector.process(data)
+                    now = time.monotonic()
+                    wake_rms = _pcm_rms(data) if wake_detected else 0.0
+                    if wake_detected and not _wake_allowed_during_playback(
+                        wake_rms,
+                        remote_state,
+                        playback_control,
+                        now,
+                    ):
+                        log.info(
+                            "Ignored likely speaker-echo wake at %.1f RMS while GPT Live was talking",
+                            wake_rms,
+                        )
+                        data = bytes(AUDIO_BYTES)
+                    elif wake_detected:
                         wake_state["active"] = True
                         wake_state["assistant_response_seen"] = False
                         wake_state["last_activity"] = now
@@ -1430,6 +1444,23 @@ def _output_is_playing(state, playback_control=None, now=None):
     now = time.monotonic() if now is None else now
     return (
         now < playback_control.get("playing_until", 0.0)
+        and now - playback_control.get("started_at", now) >= WAKE_INTERRUPT_GUARD_SECONDS
+    )
+
+
+def _wake_allowed_during_playback(rms, state, playback_control=None, now=None):
+    now = time.monotonic() if now is None else now
+    remote_speaking = state.get("value") == "speaking"
+    local_playback = bool(
+        playback_control
+        and now < playback_control.get("playing_until", 0.0)
+    )
+    if not remote_speaking and not local_playback:
+        return True
+    if not playback_control:
+        return False
+    return (
+        rms >= WAKE_INTERRUPT_MIN_RMS
         and now - playback_control.get("started_at", now) >= WAKE_INTERRUPT_GUARD_SECONDS
     )
 

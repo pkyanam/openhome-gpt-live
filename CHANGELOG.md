@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.7 - 2026-08-08
+
+- Prevent GPT Live's own spoken response from being accepted as a new Juniper
+  wake while speaker playback is active. A wake during playback now requires
+  both an offline wake-word match and independently strong near-end audio.
+- Add regression coverage for speaker-echo rejection while preserving genuine
+  wake-word barge-in and normal wake detection when the speaker is quiet.
+- Validate the fix on an official DevKit running firmware 1.0.8 with the exact
+  former failure case, followed by a no-wake negative room-audio check.
+
 ## 0.2.6 - 2026-08-08
 
 - Fix the OpenHome release uploader to publish the actual new Ability code
