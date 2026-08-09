@@ -583,6 +583,31 @@ class DevKitProtocolTests(unittest.TestCase):
             {"value": "connecting"}, playback, now + 0.3
         ))
 
+    def test_speaker_echo_cannot_reopen_wake_gate_during_playback(self):
+        now = live.time.monotonic()
+        playback = {
+            "started_at": now - 2.0,
+            "playing_until": now + 0.2,
+        }
+        self.assertFalse(live._wake_allowed_during_playback(
+            live.WAKE_INTERRUPT_MIN_RMS - 1,
+            {"value": "connecting"},
+            playback,
+            now,
+        ))
+        self.assertTrue(live._wake_allowed_during_playback(
+            live.WAKE_INTERRUPT_MIN_RMS + 1,
+            {"value": "connecting"},
+            playback,
+            now,
+        ))
+        self.assertTrue(live._wake_allowed_during_playback(
+            0,
+            {"value": "listening"},
+            {"started_at": 0.0, "playing_until": 0.0},
+            now,
+        ))
+
     def test_pcm_rms_detects_audible_playback(self):
         quiet = array.array("h", [2] * live.AUDIO_SAMPLES).tobytes()
         speech = array.array("h", [200] * live.AUDIO_SAMPLES).tobytes()
