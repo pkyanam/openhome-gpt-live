@@ -35,6 +35,12 @@ Use a trusted HTTPS endpoint, keep Bun bound to loopback, protect `.env` and
 `data/`, and apply project updates. Back up `.env` and `data/` together;
 rotating `LWC_SECRET` invalidates encrypted session state.
 
+For a locally managed Cloudflare Tunnel, protect `~/.cloudflared/cert.pem` as
+an account-wide management credential and the tunnel's UUID JSON file as its
+run credential. The repository writes only a path reference under ignored
+`data/`; it never commits either credential. `bun run tunnel -- uninstall`
+stops the managed service without deleting the account tunnel or DNS record.
+
 Workspace-only is the safe default. Full Access deliberately removes the
 application approval boundary and gives voice-initiated Codex
 `danger-full-access`. Only enable it on a personally controlled host and

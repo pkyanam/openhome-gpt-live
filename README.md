@@ -1,129 +1,150 @@
 # OpenHome GPT Live
 
 Turn an OpenHome DevKit into a wake-word GPT Live speaker with OpenAI web
-search and local Codex tool access. Say **“Juniper, …”** before every request.
+search and optional local Codex tools. Say **“Juniper, …”** before every request.
 
-- GPT Live owns speech, ordinary conversation, and general knowledge.
-- OpenAI's first-party `web_search` handles current information.
-- Codex handles files, projects, applications, and computer actions.
-- ChatGPT authorization happens in the hosted `/setup` control page with a
-  device code.
-- No OpenAI API key, ChatGPT cookie capture, Chromium, display, keyboard, or
-  mouse is needed on the DevKit.
+[Explore the project site](https://pkyanam.github.io/openhome-gpt-live/) ·
+[Troubleshooting](docs/TROUBLESHOOTING.md) ·
+[Architecture](docs/ARCHITECTURE.md) ·
+[Security](SECURITY.md)
+
+- GPT Live owns speech, conversation, and general knowledge.
+- OpenAI's first-party search handles current information.
+- Codex can handle files, projects, applications, and computer actions.
+- ChatGPT uses device-code authorization—no API key or cookie capture.
+- The DevKit needs no browser, display, keyboard, or mouse.
 
 > [!IMPORTANT]
 > This is an independent, self-hosted integration—not an OpenHome or OpenAI
-> product. It uses the experimental GPT Live support merged in
+> product. It uses experimental GPT Live support from
 > [`login-with-chatgpt` PR #6](https://github.com/opencoredev/login-with-chatgpt/pull/6).
 > A private upstream protocol change can require a project update.
 
-## Requirements
+## Quick start
 
-- An onboarded OpenHome DevKit with Local Abilities. Firmware **1.0.8 is
-  tested**; 1.1.0 is not required.
-- A ChatGPT subscription with GPT Live and Codex access.
-- An always-on macOS or Linux host computer with Codex installed and signed in.
-  Workspace tasks work on either OS; Mac app control requires macOS.
-- A stable public HTTPS hostname forwarding to `http://127.0.0.1:3000` on the
-  host. See [Stable HTTPS setup](docs/STABLE-HTTPS.md).
-- An OpenHome API key only if you want automatic Ability upload or OpenHome
-  account tools. Voice, web search, and local Codex do not require it.
-
-The official DevKit is the supported full-duplex target. Custom Raspberry Pi
-audio may require manual devices and may not support interruption as well.
-
-## What the browser control page is
-
-The macOS or Linux host serves a small web control page at `/setup`. Open its
-public HTTPS URL in any trusted browser: the browser can be on the host itself,
-another computer, a phone, or a tablet. That browser is used only for one-time
-DevKit pairing, ChatGPT device authorization, voice selection, status, and
-consequential-action approvals. Speaker audio never passes through it.
-
-The control page is **not embedded in the OpenHome mobile app**. OpenHome's app
-or dashboard is used separately to install, sync, and restart the Local
-Ability. Calling `/setup` the “paired browser” means the browser profile holding
-this integration's HttpOnly pairing cookie, not a particular physical device.
-
-## Install the host
-
-Run this on the computer that will stay online:
+Run this on the macOS or Linux computer that will stay online with the speaker:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/install.sh | bash
 ```
 
-The installer downloads or updates the project, installs dependencies, gathers
-the small amount of configuration it needs, runs the full test suite, builds a
-valid Ability ZIP, installs a launchd/systemd service, and uploads or upgrades
-the Ability when an OpenHome API key is available.
+The interactive wizard is safe to rerun. It updates clean installations,
+preserves `.env`, `data/`, pairing/login state, tunnel credentials, and the
+existing cloud Ability id, and pauses instead of overwriting local changes.
 
-The default location is `~/.openhome-gpt-live`. Re-running the command updates
-in place while preserving `.env`, device pairing, and ChatGPT login state.
+It offers four HTTPS choices:
 
-## Finish setup in OpenHome
+1. **Persistent Cloudflare Tunnel** — recommended when your domain uses
+   Cloudflare; creates/reuses a named account tunnel and a user service.
+2. **Existing HTTPS URL** — use any stable reverse proxy already forwarding to
+   `http://127.0.0.1:3000`.
+3. **Quick Tunnel** — a temporary evaluation URL that changes after restart.
+4. **Configure later** — prepares the host without starting production.
 
-First print the two OpenHome values:
+See every interactive and automation option without installing:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/install.sh | bash -s -- --help
+```
+
+### Prefer a local agent?
+
+The repository is a Codex-compatible plugin and includes a concise, reusable
+skill plus deterministic preflight and status scripts. Give a local coding
+agent this small prompt:
+
+```text
+Read and follow https://raw.githubusercontent.com/pkyanam/openhome-gpt-live/main/skills/openhome-gpt-live/SKILL.md.
+Set up OpenHome GPT Live on this computer. Do every safe machine step, preserve existing state, and pause only for the human-only account, dashboard, DNS, authorization, or physical-speaker steps named by the skill.
+```
+
+That replaces the former page-long agent prompt. After cloning, Codex can load
+`$openhome-gpt-live` directly from [`skills/openhome-gpt-live`](skills/openhome-gpt-live).
+
+## What you need
+
+- An onboarded OpenHome DevKit with Local Abilities. Firmware **1.0.8 is
+  physically tested**; 1.1.0 is not required.
+- A ChatGPT subscription with GPT Live access.
+- A macOS or Linux host that stays online.
+- A stable public HTTPS origin before production use.
+
+Everything else is optional:
+
+| Component | What it adds | Without it |
+| --- | --- | --- |
+| Codex | Files, projects, apps, and computer actions | GPT Live conversation and OpenAI search still work |
+| OpenHome API key | Automatic Ability upload and account tools | Upload the generated ZIP in the dashboard |
+| Cloudflare account/domain | Wizard-managed persistent tunnel | Use another HTTPS proxy or configure later |
+| Python 3 | Local Ability tests and packaging | Installer can use prebuilt release ZIPs |
+
+The official DevKit is the supported full-duplex target. Custom Raspberry Pi
+audio may need manual device selection and may interrupt less reliably.
+
+## The guided handoff
+
+The installer finishes by running:
 
 ```bash
 cd ~/.openhome-gpt-live
-bun run openhome:config
+bun run finish
 ```
 
-Then open the [OpenHome Dashboard](https://app.openhome.com) and complete these
-steps:
+This prints the exact two OpenHome Third Party Keys and walks through the only
+steps the host cannot perform for you:
 
-1. Open **Settings → API Keys → Third Party Keys**.
-2. Create `openhome_gpt_live_server_url` with the printed HTTPS origin.
-3. Create `openhome_gpt_live_bootstrap_token` with the printed enrollment
-   token.
-4. Link both keys to **OpenHome GPT Live**.
-5. Open **My Abilities**. If the installer did not upload the Ability, upload
-   `~/.openhome-gpt-live/dist/openhome-gpt-live-ability.zip` as a **Local**
-   Ability.
-6. Install and enable it on the active Agent.
-7. To prevent OpenHome's built-in assistant from also answering ambient speech,
-   enable its wake word and change it to a reserved recovery phrase such as
-   `openhome fallback seven nine`.
-8. Tap **Sync Abilities**, then **Restart Agent**.
-9. In the dashboard's **Activity** chat, send `gpt live diagnostics` once. On
-   firmware 1.0.8 this bootstraps and starts the persistent GPT Live worker;
-   normal voice use never needs this phrase.
+1. Link the printed server URL and bootstrap token to **OpenHome GPT Live**.
+2. Install and enable the Local Ability. Without API automation, upload
+   `dist/openhome-gpt-live-ability.zip`.
+3. Tap **Sync Abilities**, restart the Agent, and send `gpt live diagnostics`
+   once in Activity to bootstrap firmware 1.0.8.
+4. Press Enter in the wizard. It retrieves the DevKit pairing code from the
+   host—speaker audio and raw log inspection are not required.
+5. Open the printed `/setup` link in any trusted browser and complete Login with
+   ChatGPT device-code authorization.
 
-## Pair without relying on speaker audio
+The browser is a setup/control surface served by this bridge. It can be on the
+host, another computer, a phone, or a tablet; it is **not** embedded in the
+OpenHome mobile app, and speaker audio never passes through it.
 
-After the Agent restarts, run this on the host:
+## Installer examples
+
+Interactive persistent Cloudflare setup:
 
 ```bash
-cd ~/.openhome-gpt-live
-bun run pairing:code -- --wait=180
+./install.sh --tunnel cloudflare --hostname voice.example.com
 ```
 
-It prints the eight-digit DevKit code and a one-click setup link. Open that link
-in any trusted browser, select **Pair DevKit**, then use **Open ChatGPT
-authorization** and enter the ChatGPT device code shown on the page.
+Existing reverse proxy:
 
-The DevKit may also speak the pairing code, but audio is not required. The host
-keeps only a private, short-lived copy for this command: it expires after 15
-minutes and is deleted when claimed.
+```bash
+./install.sh --tunnel existing --public-url https://voice.example.com
+```
 
-When setup succeeds, the browser control page shows the device as live and the
-ChatGPT account as connected.
+Agent or unattended host preparation:
 
-## Choose a voice
+```bash
+./install.sh \
+  --non-interactive \
+  --tunnel existing \
+  --public-url https://voice.example.com \
+  --email user@example.com \
+  --workspace /srv/juniper \
+  --access workspace \
+  --skip-finish
+```
 
-The paired `/setup` page contains a **GPT Live Voice** picker. Supported voices
-are:
+Pass secrets through hidden prompts or environment variables, never CLI flags.
+Full Access additionally requires `OPENHOME_GPT_LIVE_ACCEPT_FULL_ACCESS=1` in
+non-interactive mode.
 
-**Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol, Spruce, and Vale.**
+The same controls are available after installation:
 
-Vale is the default for new devices. Saving a different voice restarts only the
-Live connection. The page shows **reconnecting** and returns to **live**
-automatically, normally within a few seconds. The selection saved through the
-control page is authoritative on every reconnect, even if the DevKit still has
-an older local fallback value. The wake phrase is a separate setting and
-remains **Juniper** unless you change the optional
-`openhome_gpt_live_wake_phrase` Third Party Key.
+```bash
+bun run setup -- --help
+bun run tunnel -- --help
+bun run finish -- --help
+```
 
 ## Verify the speaker
 
@@ -136,177 +157,80 @@ Try these in order:
 > “Juniper, create a small web game in my workspace and tell me when it is
 > done.”
 
-“Juniper” is required for every new request, including interruptions. While
-armed, the offline wake detector runs locally and the worker sends silence to
-GPT Live. Real microphone audio is forwarded only after the wake phrase. The
-microphone gate closes again after every answer without disconnecting GPT Live,
-so follow-up requests retain the same conversation context but still require
-“Juniper.”
-
-The browser control page reports the last lane used without storing the spoken
-request:
+“Juniper” is required for every new request, including interruptions. The
+offline gate runs locally, closes again after every answer, and keeps the same
+GPT Live session so conversation context survives.
 
 | Request | Lane |
 | --- | --- |
 | Conversation, explanations, date/time | GPT Live |
-| Current facts, news, weather, explicit web searches | OpenAI web search |
-| Files, code, projects, OpenHome actions, Mac control | Codex |
+| Current facts, news, weather, web searches | OpenAI web search |
+| Files, code, projects, OpenHome actions, computer control | Codex |
 
-OpenAI search and Codex work run independently. Codex tasks are serialized,
+Search and Codex work run independently. Codex tasks are serialized,
 acknowledged when they start, and announced through GPT Live when they finish.
-You can continue ordinary conversation or search while Codex works.
 
-## Codex access modes
+## Voices and access
 
-The installer defaults to **Workspace only**.
+Choose Arbor, Breeze, Cove, Ember, Juniper, Maple, Sol, Spruce, or Vale on the
+paired `/setup` page. Vale is the new-device default. Changing the voice
+reconnects GPT Live automatically; the wake phrase remains Juniper unless its
+optional Third Party Key is changed.
 
-| Mode | Voice-started Codex access |
+Codex defaults to **Workspace only**:
+
+| Mode | Voice-started access |
 | --- | --- |
-| Workspace only | Read, create, edit, run, and test inside the configured folder. |
-| Browser confirmed | Workspace tasks run directly; broader computer actions wait for approval on `/setup`. |
-| Full Access | Runs delegated Codex with `danger-full-access` and no approval prompt. The owner assumes the risk. |
+| Workspace only | Work inside the configured folder |
+| Browser confirmed | Broader computer actions wait for approval on `/setup` |
+| Full Access | Approval-free `danger-full-access`; owner assumes the risk |
 
-Change the mode later with:
+Run `bun run setup` and `bun run service:install` to change modes later.
 
-```bash
-cd ~/.openhome-gpt-live
-bun run setup
-bun run service:install
-```
+## Update, health, and recovery
 
-## Health, updates, and help
+Rerun the one-line installer to update or resume. Useful direct checks:
 
 ```bash
 cd ~/.openhome-gpt-live
 bun run doctor -- --require-server
 bun run service:status
+bun run tunnel -- status
 curl http://127.0.0.1:3000/healthz
 ```
 
-To update, rerun the one-line installer. On firmware 1.0.8, prepare the DevKit's
-cached Ability before syncing a code update:
+For a firmware 1.0.8 Ability code update:
 
 ```bash
-cd ~/.openhome-gpt-live
 bun run ability:prepare-sync
 ```
 
-Reconnect the DevKit in OpenHome, tap **Sync Abilities**, then **Restart
-Agent**. The preparation command stops GPT Live and renames only its cached
-device folder to a timestamped backup; it never deletes the cloud Ability,
+Reconnect the DevKit, tap **Sync Abilities**, and restart the Agent. This only
+archives the cached GPT Live folder; it does not delete the cloud Ability,
 pairing, or host state.
 
 - [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
-- [Manual installation and upgrades](docs/MANUAL-INSTALL.md)
+- [Manual setup and upgrades](docs/MANUAL-INSTALL.md)
+- [Stable HTTPS details](docs/STABLE-HTTPS.md)
 - [Architecture and data flow](docs/ARCHITECTURE.md)
 - [Security model](SECURITY.md)
 
 ## How it works
 
 The OpenHome package combines a Local Ability with a background provider. Its
-headless Python worker performs offline wake detection, creates the WebRTC
-audio connection, and uses PipeWire's WebRTC acoustic echo canceller for
-full-duplex interruption.
+headless Python worker performs offline wake detection, WebRTC audio, and
+PipeWire acoustic echo cancellation.
 
-The host bridge uses the vendored Login with ChatGPT SDK and the SDK's
-app-server GPT Live path. ChatGPT access and refresh material stays on the host
-inside the encrypted session store. The host mediates structured Live
-handoffs, sends current-information requests to the subscription-backed
-Responses endpoint with `web_search`, and sends only local/action requests to
-Codex. Search and Codex results return through GPT Live's `appendSpeech` path.
-No browser cookies or OpenAI API key are used.
+The host bridge uses the vendored Login with ChatGPT SDK's app-server GPT Live
+path. ChatGPT access and refresh material stays encrypted on the host. The host
+routes current-information requests to subscription-backed `web_search`, sends
+local/action requests to Codex, and returns results through GPT Live speech. No
+browser cookies or OpenAI API key are used.
 
-The vendored SDK is pinned to
-[`3befb7f`](https://github.com/opencoredev/login-with-chatgpt/commit/3befb7fb625170cb305b116a654c7e2f8672bae4),
-the merge commit for the voice PR. See
-[`vendor/login-with-chatgpt/UPSTREAM.md`](vendor/login-with-chatgpt/UPSTREAM.md)
-for the focused integration patch list and MIT license details.
-
-## Copy/paste prompt for a local coding agent
-
-Paste the prompt below into Codex or another local coding agent running on the
-macOS or Linux computer that will host the bridge. It tells the agent to do all
-machine work and stop only for browser, account, DNS, or physical-speaker steps.
-
-```text
-Set up OpenHome GPT Live end to end on this computer.
-
-Repository:
-https://github.com/pkyanam/openhome-gpt-live
-
-Goal:
-Install the always-on host bridge, build and upload the OpenHome Local Ability,
-connect it through stable HTTPS, retrieve the DevKit pairing code, help me
-authorize ChatGPT in a trusted browser, and verify GPT Live conversation, OpenAI web
-search, and a local Codex workspace task. Continue autonomously until it works
-or a genuinely human-only action is required.
-
-Rules:
-- Read README.md, SECURITY.md, docs/STABLE-HTTPS.md,
-  docs/MANUAL-INSTALL.md, and docs/TROUBLESHOOTING.md before making changes.
-- Preserve an existing .env, data/, pairing/login state, tunnel configuration,
-  installed Ability object, and unrelated user changes.
-- Never print or commit LWC_SECRET, OPENHOME_API_KEY, ChatGPT tokens/cookies,
-  DevKit credentials, tunnel credentials, .env, or data/. Show the bootstrap
-  token only when I must paste it into OpenHome.
-- Do not install a browser on the DevKit and do not capture ChatGPT web cookies.
-  Authorization uses the Login with ChatGPT device-code flow in the hosted
-  /setup browser control page.
-- Require a stable HTTPS origin. A random trycloudflare URL is evaluation-only.
-- Default Codex to Workspace only. Ask before Browser confirmed or Full Access;
-  Full Access requires an explicit risk acknowledgement.
-- Do not weaken HTTPS, account-email binding, origin checks, secret lengths, or
-  confirmation boundaries to make setup pass.
-
-Execution:
-1. Confirm macOS or Linux and check git, curl, Python 3, Bun, and Codex. Install
-   Bun if absent. If Codex is missing or logged out, hand off only that human
-   login step and resume afterward.
-2. Clone to ~/.openhome-gpt-live, or safely fast-forward the existing checkout.
-   Run `bun install --frozen-lockfile` and `bun run check`.
-3. Collect only missing values: ChatGPT account email, stable public HTTPS
-   origin, Codex workspace, access mode, and optional OpenHome API key. Run
-   `bun run setup`; preserve existing generated secrets.
-4. Verify the public HTTPS health endpoint and install/restart the host with
-   `bun run service:install`. Run `bun run doctor -- --require-server` and fix
-   every failure.
-5. If OPENHOME_API_KEY is configured, run `bun run upload:ability` to create or
-   upgrade OpenHome GPT Live in place. Otherwise point me to
-   `dist/openhome-gpt-live-ability.zip` for a new Ability or
-   `dist/openhome-gpt-live-release.zip` in an existing Ability's release
-   editor. Never delete a working cloud Ability merely to upgrade it. On
-   firmware 1.0.8 upgrades, run `bun run ability:prepare-sync` before the
-   dashboard Sync so stale device files cannot survive the update.
-6. Run `bun run openhome:config` and give me one short numbered list for the
-   human-only OpenHome steps: create/link the two exact Third Party Keys,
-   install/enable the Local Ability, move the built-in assistant to a reserved
-   recovery wake phrase, Sync Abilities, Restart Agent, then send `gpt live
-   diagnostics` once in Activity to bootstrap firmware 1.0.8. Wait for me.
-7. Run `bun run pairing:code -- --wait=180`. Give me the one-click setup link
-   and pairing code without exposing any other state. If no code appears,
-   diagnose Ability installation/configuration instead of asking me to inspect
-   raw logs. Have me pair a trusted browser and complete ChatGPT device
-   authorization there. Explain that /setup is hosted by this Mac/Linux bridge
-   and is not part of the OpenHome mobile app.
-8. On /setup, let me choose one of Arbor, Breeze, Cove, Ember, Juniper, Maple,
-   Sol, Spruce, or Vale. Explain that the speaking voice and Juniper wake phrase
-   are independent. Wait for Live to reconnect after a change.
-9. Verify local and public health, service status, paired-page state, and safe
-   DevKit `live_status`. Never read or expose the DevKit config file.
-10. Ask me to test:
-    - “Juniper, explain photosynthesis in two sentences.”
-    - “Juniper, search the web for today’s OpenHome news.” Confirm the page says
-      OpenAI web search and Codex remains idle.
-    - “Juniper, create a small test file in my workspace and tell me when it is
-      done.” Confirm the immediate Codex acknowledgement and final spoken result.
-11. If source changes, rerun `bun run check`, upgrade the existing Ability in
-    place, prepare the firmware-1.0.8 cache when applicable, then ask me only
-    for reconnect, Sync Abilities, and Restart Agent.
-
-Finish with the installed commit/version, service and public-health status,
-Ability ZIP checksum, selected voice, access mode, workspace, and the three
-successful spoken tests. Never include secrets or tokens.
-```
+The SDK is pinned to the voice-PR merge commit
+[`3befb7f`](https://github.com/opencoredev/login-with-chatgpt/commit/3befb7fb625170cb305b116a654c7e2f8672bae4).
+See [`vendor/login-with-chatgpt/UPSTREAM.md`](vendor/login-with-chatgpt/UPSTREAM.md)
+for the integration patch list and MIT license details.
 
 ## Development
 
@@ -314,10 +238,9 @@ successful spoken tests. Never include secrets or tokens.
 git clone https://github.com/pkyanam/openhome-gpt-live.git
 cd openhome-gpt-live
 bun install --frozen-lockfile
-cp .env.example .env
 bun run check
 ```
 
-`bun run package:ability` produces a reproducible single-root ZIP and SHA-256
+`bun run package:ability` produces both OpenHome ZIP formats and a SHA-256
 checksum in `dist/`. Pull requests are welcome; see
 [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -7,18 +8,26 @@ import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { readEnvFile, writePrivateEnvFile, type EnvValues } from "./env-file.ts";
 
+type AccessMode = "disabled" | "confirmed" | "full";
+type TunnelMode = "existing" | "cloudflare" | "quick" | "later";
+
 const projectRoot = resolve(import.meta.dir, "..");
 const envPath = process.env.OPENHOME_GPT_ENV_FILE
   ? resolve(process.env.OPENHOME_GPT_ENV_FILE)
   : resolve(projectRoot, ".env");
 const existing = await readEnvFile(envPath);
-const nonInteractive = process.argv.includes("--non-interactive");
+const options = parseOptions(process.argv.slice(2));
+
+if (options.help) {
+  printHelp();
+  process.exit(0);
+}
 
 console.log("\nOpenHome GPT Live setup\n");
-console.log("This keeps ChatGPT credentials on this computer and live audio on the DevKit.");
-console.log("Press Enter to keep a value shown in brackets.\n");
+console.log("Re-running this wizard keeps existing secrets, pairing, and ChatGPT login state.");
+console.log("Codex, OpenHome API automation, and managed Cloudflare Tunnel are optional.\n");
 
-const terminalInput = nonInteractive
+const terminalInput = options.nonInteractive
   ? undefined
   : !process.stdin.isTTY ? createReadStream("/dev/tty") : process.stdin;
 let mutePromptOutput = false;
@@ -33,32 +42,37 @@ const prompts = terminalInput
   : undefined;
 
 try {
-  const email = await requiredValue(
-    "ChatGPT account email",
-    configured("APP_ALLOWED_CHATGPT_EMAIL"),
-    validateEmail,
-  );
-  const publicBaseUrlInput = await requiredValue(
-    "Stable public HTTPS URL (for example https://voice.example.com)",
-    configured("PUBLIC_BASE_URL"),
-    validatePublicBaseUrl,
-  );
-  const publicBaseUrl = new URL(publicBaseUrlInput).origin;
-  const workspaceDefault = configured("CODEX_WORKSPACE") || resolve(homedir(), "Code", "Juniper");
+  const tunnelMode = await chooseTunnelMode();
+  const publicBaseUrl = await configurePublicUrl(tunnelMode);
+  const email = publicBaseUrl
+    ? await requiredValue(
+      "ChatGPT account email",
+      options.email ?? configured("APP_ALLOWED_CHATGPT_EMAIL"),
+      validateEmail,
+    )
+    : await optionalValue(
+      "ChatGPT account email (optional until HTTPS is configured)",
+      options.email ?? configured("APP_ALLOWED_CHATGPT_EMAIL"),
+      validateOptionalEmail,
+    );
+
+  const workspaceDefault = options.workspace
+    ?? configured("CODEX_WORKSPACE")
+    ?? resolve(homedir(), "Code", "Juniper");
   const workspace = resolve(expandHome(await requiredValue(
     "Folder Codex may work in",
     workspaceDefault,
     (value) => value.trim() ? undefined : "Enter a folder path.",
   )));
-  const access = await chooseAccessMode(configured("CODEX_MAC_CONTROL") || "disabled");
+  const access = await chooseAccessMode(options.access ?? configured("CODEX_MAC_CONTROL") ?? "disabled");
   const openHomeApiKey = await optionalSecret(
-    "OpenHome API key (optional; enables account tools and automatic Ability upload)",
-    configured("OPENHOME_API_KEY"),
+    "OpenHome API key (optional; enables upload and account tools)",
+    configured("OPENHOME_API_KEY") ?? "",
   );
 
   if (access === "full") {
     console.log("\nFull Access lets voice-initiated Codex tasks control this computer without approval.");
-    if (!nonInteractive) {
+    if (!options.nonInteractive) {
       const confirmation = await prompts!.question("Type FULL ACCESS to confirm: ");
       if (confirmation.trim() !== "FULL ACCESS") throw new Error("Full Access was not confirmed.");
     } else if (process.env.OPENHOME_GPT_LIVE_ACCEPT_FULL_ACCESS !== "1") {
@@ -80,9 +94,10 @@ try {
     GPT_LIVE_PERSONALITY_PROMPT: configured("GPT_LIVE_PERSONALITY_PROMPT"),
     LWC_ALLOWED_MODELS: configured("LWC_ALLOWED_MODELS"),
     LWC_DEFAULT_MODEL: configured("LWC_DEFAULT_MODEL"),
+    LWC_SEARCH_MODEL: configured("LWC_SEARCH_MODEL"),
     HOST: "127.0.0.1",
     PORT: configured("PORT") || "3000",
-    LWC_ALLOWED_ORIGINS: configured("LWC_ALLOWED_ORIGINS") || publicBaseUrl,
+    LWC_ALLOWED_ORIGINS: publicBaseUrl,
     NODE_ENV: "production",
   };
   await writePrivateEnvFile(envPath, values, [
@@ -91,15 +106,76 @@ try {
   ]);
 
   console.log(`\nConfiguration saved to ${envPath}`);
+  console.log(`HTTPS: ${publicBaseUrl || "configure later"}`);
   console.log(`Codex workspace: ${workspace}`);
   console.log(`Codex access: ${access === "disabled" ? "workspace only" : access}`);
-  console.log("\nYou will enter these two values in OpenHome:");
-  console.log(`  openhome_gpt_live_server_url = ${publicBaseUrl}`);
-  console.log(`  openhome_gpt_live_bootstrap_token = ${values.DEVKIT_BOOTSTRAP_TOKEN}`);
-  console.log("\nRun `bun run openhome:config` later if you need to see them again.");
+  console.log(`OpenHome API automation: ${openHomeApiKey ? "enabled" : "not configured"}`);
+  if (publicBaseUrl && email) {
+    console.log("\nReady for the host service. Run `bun run finish` for the OpenHome and ChatGPT handoff.");
+  } else {
+    console.log("\nHost files are ready, but the production service is paused until HTTPS and ChatGPT email are configured.");
+    console.log("Resume with `bun run setup`, then `bun run service:install`.");
+  }
 } finally {
   prompts?.close();
   if (terminalInput && terminalInput !== process.stdin) terminalInput.close();
+}
+
+async function chooseTunnelMode(): Promise<TunnelMode> {
+  if (options.tunnel) return options.tunnel;
+  if (options.publicUrl) return "existing";
+  if (options.nonInteractive) return configured("PUBLIC_BASE_URL") ? "existing" : "later";
+
+  const current = configured("PUBLIC_BASE_URL");
+  console.log("HTTPS connection:");
+  if (current) console.log(`  1. Keep existing ${current} (recommended)`);
+  else console.log("  1. Create a persistent Cloudflare Tunnel (recommended)");
+  console.log(current ? "  2. Create or reuse a persistent Cloudflare Tunnel" : "  2. Use an existing stable HTTPS URL");
+  console.log("  3. Start a temporary Quick Tunnel for evaluation");
+  console.log("  4. Configure HTTPS later");
+  const answer = (await prompts!.question("Choose 1, 2, 3, or 4 [1]: ")).trim() || "1";
+  if (answer === "1") return current ? "existing" : "cloudflare";
+  if (answer === "2") return current ? "cloudflare" : "existing";
+  if (answer === "3") return "quick";
+  if (answer === "4") return "later";
+  console.log("  Please choose 1, 2, 3, or 4.");
+  return chooseTunnelMode();
+}
+
+async function configurePublicUrl(mode: TunnelMode): Promise<string> {
+  if (mode === "later") return "";
+  if (mode === "existing") {
+    const input = await requiredValue(
+      "Stable public HTTPS URL",
+      options.publicUrl ?? configured("PUBLIC_BASE_URL"),
+      validatePublicBaseUrl,
+    );
+    return new URL(input).origin;
+  }
+  if (mode === "cloudflare") {
+    const hostname = await requiredValue(
+      "Cloudflare DNS hostname (for example voice.example.com)",
+      options.hostname ?? hostnameFromUrl(configured("PUBLIC_BASE_URL")),
+      validateHostname,
+    );
+    const tunnelArgs = ["scripts/tunnel.ts", "setup", "--hostname", hostname];
+    if (options.tunnelName) tunnelArgs.push("--name", options.tunnelName);
+    if (options.nonInteractive) tunnelArgs.push("--non-interactive");
+    const result = spawnSync(process.execPath, tunnelArgs, { cwd: projectRoot, stdio: "inherit" });
+    if (result.status !== 0) throw new Error("Persistent Cloudflare Tunnel setup did not complete.");
+    return `https://${hostname}`;
+  }
+
+  const result = spawnSync(process.execPath, ["scripts/tunnel.ts", "quick"], {
+    cwd: projectRoot,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error(result.stderr?.trim() || "Quick Tunnel setup failed.");
+  const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}") as { url?: string };
+  if (!payload.url) throw new Error("Quick Tunnel did not return a public URL.");
+  console.log(`Temporary Quick Tunnel: ${payload.url}`);
+  console.log("This URL changes when the process restarts; rerun setup with a persistent option before relying on the speaker.");
+  return payload.url;
 }
 
 function configured(name: string): string {
@@ -111,7 +187,7 @@ async function requiredValue(
   current: string,
   validate: (value: string) => string | undefined,
 ): Promise<string> {
-  if (nonInteractive) {
+  if (options.nonInteractive) {
     const error = validate(current);
     if (error) throw new Error(`${label}: ${error}`);
     return current;
@@ -126,8 +202,28 @@ async function requiredValue(
   }
 }
 
+async function optionalValue(
+  label: string,
+  current: string,
+  validate: (value: string) => string | undefined,
+): Promise<string> {
+  if (options.nonInteractive) {
+    const error = validate(current);
+    if (error) throw new Error(`${label}: ${error}`);
+    return current;
+  }
+  while (true) {
+    const suffix = current ? ` [${current}]` : " [Enter to skip]";
+    const entered = (await prompts!.question(`${label}${suffix}: `)).trim();
+    const value = entered || current;
+    const error = validate(value);
+    if (!error) return value;
+    console.log(`  ${error}`);
+  }
+}
+
 async function optionalSecret(label: string, current: string): Promise<string> {
-  if (nonInteractive) return current;
+  if (options.nonInteractive) return current;
   const suffix = current ? " [already saved; Enter keeps it]" : " [Enter to skip]";
   process.stdout.write(`${label}${suffix}: `);
   mutePromptOutput = true;
@@ -137,12 +233,12 @@ async function optionalSecret(label: string, current: string): Promise<string> {
   return entered || current;
 }
 
-async function chooseAccessMode(current: string): Promise<"disabled" | "confirmed" | "full"> {
-  const normalized = ["disabled", "confirmed", "full"].includes(current) ? current : "disabled";
-  if (nonInteractive) return normalized as "disabled" | "confirmed" | "full";
-  console.log("\nCodex access:");
+async function chooseAccessMode(current: string): Promise<AccessMode> {
+  const normalized = ["disabled", "confirmed", "full"].includes(current) ? current as AccessMode : "disabled";
+  if (options.nonInteractive) return normalized;
+  console.log("\nCodex tools (optional):");
   console.log("  1. Workspace only (recommended)");
-  console.log("  2. Ask in the paired browser control page before controlling the Mac");
+  console.log("  2. Confirm broader computer actions in /setup");
   console.log("  3. Full Access without approval");
   const defaultChoice = normalized === "confirmed" ? "2" : normalized === "full" ? "3" : "1";
   const answer = (await prompts!.question(`Choose 1, 2, or 3 [${defaultChoice}]: `)).trim() || defaultChoice;
@@ -153,10 +249,65 @@ async function chooseAccessMode(current: string): Promise<"disabled" | "confirme
   return chooseAccessMode(normalized);
 }
 
+function parseOptions(values: string[]): {
+  help: boolean;
+  nonInteractive: boolean;
+  email?: string;
+  publicUrl?: string;
+  workspace?: string;
+  access?: AccessMode;
+  tunnel?: TunnelMode;
+  hostname?: string;
+  tunnelName?: string;
+} {
+  const parsed = { help: false, nonInteractive: false } as ReturnType<typeof parseOptions>;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!;
+    const next = () => {
+      const found = values[++index];
+      if (!found) throw new TypeError(`${value} requires a value.`);
+      return found;
+    };
+    if (value === "--help" || value === "-h") parsed.help = true;
+    else if (value === "--non-interactive") parsed.nonInteractive = true;
+    else if (value === "--email") parsed.email = next();
+    else if (value.startsWith("--email=")) parsed.email = value.slice(8);
+    else if (value === "--public-url") parsed.publicUrl = next();
+    else if (value.startsWith("--public-url=")) parsed.publicUrl = value.slice(13);
+    else if (value === "--workspace") parsed.workspace = next();
+    else if (value.startsWith("--workspace=")) parsed.workspace = value.slice(12);
+    else if (value === "--access") parsed.access = parseAccess(next());
+    else if (value.startsWith("--access=")) parsed.access = parseAccess(value.slice(9));
+    else if (value === "--tunnel") parsed.tunnel = parseTunnel(next());
+    else if (value.startsWith("--tunnel=")) parsed.tunnel = parseTunnel(value.slice(9));
+    else if (value === "--hostname") parsed.hostname = next();
+    else if (value.startsWith("--hostname=")) parsed.hostname = value.slice(11);
+    else if (value === "--tunnel-name") parsed.tunnelName = next();
+    else if (value.startsWith("--tunnel-name=")) parsed.tunnelName = value.slice(14);
+    else throw new TypeError(`Unknown setup option: ${value}. Run bun run setup -- --help.`);
+  }
+  return parsed;
+}
+
+function parseAccess(value: string): AccessMode {
+  if (value === "workspace" || value === "disabled") return "disabled";
+  if (value === "confirmed" || value === "full") return value;
+  throw new TypeError("--access must be workspace, confirmed, or full.");
+}
+
+function parseTunnel(value: string): TunnelMode {
+  if (["existing", "cloudflare", "quick", "later"].includes(value)) return value as TunnelMode;
+  throw new TypeError("--tunnel must be existing, cloudflare, quick, or later.");
+}
+
 function validateEmail(value: string): string | undefined {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
     ? undefined
     : "Enter the email address used by the ChatGPT account that will authorize the speaker.";
+}
+
+function validateOptionalEmail(value: string): string | undefined {
+  return value ? validateEmail(value) : undefined;
 }
 
 function validatePublicBaseUrl(value: string): string | undefined {
@@ -171,6 +322,49 @@ function validatePublicBaseUrl(value: string): string | undefined {
   }
 }
 
+function validateHostname(value: string): string | undefined {
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(value.trim())
+    ? undefined
+    : "Enter a DNS hostname such as voice.example.com.";
+}
+
+function hostnameFromUrl(value: string): string {
+  try { return new URL(value).hostname; } catch { return ""; }
+}
+
 function expandHome(value: string): string {
   return value === "~" ? homedir() : value.startsWith("~/") ? resolve(homedir(), value.slice(2)) : value;
+}
+
+function printHelp(): void {
+  console.log(`OpenHome GPT Live configuration wizard
+
+Usage:
+  bun run setup
+  bun run setup -- [options]
+
+Options:
+  --tunnel MODE        existing, cloudflare, quick, or later
+  --public-url URL     Stable HTTPS origin for existing mode
+  --hostname HOST      DNS hostname for Cloudflare mode
+  --tunnel-name NAME   Named Cloudflare Tunnel to create or reuse
+  --email EMAIL        ChatGPT account email allowed to authorize
+  --workspace PATH     Folder available to Codex tools
+  --access MODE        workspace, confirmed, or full
+  --non-interactive    Use flags, environment, and saved values only
+  -h, --help           Show this help
+
+Secrets:
+  The OpenHome API key is requested with hidden input. For non-interactive use,
+  set OPENHOME_API_KEY in the environment; do not place it in command history.
+  Existing generated secrets and saved state are reused on every run.
+
+Examples:
+  bun run setup -- --tunnel cloudflare --hostname voice.example.com
+  bun run setup -- --tunnel existing --public-url https://voice.example.com
+  bun run setup -- --tunnel later
+  bun run setup -- --non-interactive --tunnel existing \\
+    --public-url https://voice.example.com --email user@example.com \\
+    --workspace /srv/juniper --access workspace
+`);
 }
