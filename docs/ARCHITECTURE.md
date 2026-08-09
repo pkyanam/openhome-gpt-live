@@ -36,14 +36,18 @@ the DevKit worker running. Where systemd is available, the worker also installs
 a per-user service so it returns after a power cycle.
 
 PocketSphinx detects the exact configured wake name locally using keyphrase
-spotting with a likelihood-ratio threshold. A one-answer JSGF is deliberately
-not used because it can force unrelated room speech into the configured name.
+spotting with a likelihood-ratio threshold. Single-word custom names use a
+substantially stricter threshold because they are more prone to false matches.
+A one-answer JSGF is deliberately not used because it can force unrelated room
+speech into the configured name.
 Juniper is the default; voice-name presets and custom English names are
 supported. Six accepted wake detections inside two minutes trip a 30-minute
 silent cooldown that survives Live reconnects. While armed, the WebRTC
 microphone track contains silence. After the wake name, the worker forwards real
 microphone frames. During assistant playback the current turn stays open for an
-explicit wake-name barge-in; the ordinary gate re-arms only after playback ends.
+explicit wake-name barge-in. That barge-in opens a replacement backend turn
+only after sustained near-end speech clears the measured speaker-echo floor;
+rejected echo stays silent. The ordinary gate re-arms only after playback ends.
 A timeout closes failed turns even when `/wm` emits no state event. Every new
 request and mid-answer interruption requires the wake name. Re-arming changes
 only this local microphone gate:

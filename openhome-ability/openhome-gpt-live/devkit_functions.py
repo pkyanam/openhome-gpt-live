@@ -64,7 +64,8 @@ RECONNECT_MAX_SECONDS = 30.0
 # recv() still drains one fresh capture frame into the bounded queue on every
 # call, so the parec pipe cannot fill and discard the rest of the prompt.
 WAKE_PREROLL_FRAMES = 25
-WAKE_KWS_THRESHOLD = 1e-12
+WAKE_SINGLE_WORD_KWS_THRESHOLD = 1e-1
+WAKE_MULTI_WORD_KWS_THRESHOLD = 1e-6
 WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
 WAKE_CONFIRM_FRAMES = 3
 WAKE_CONFIRM_WINDOW_SECONDS = 0.8
@@ -74,8 +75,8 @@ WAKE_LOCKOUT_SECONDS = 30 * 60
 WAKE_SILENCE_RMS = 20.0
 WAKE_SILENCE_FRAMES = 25
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
-WAKE_INTERRUPT_MIN_RMS = 25.0
-WAKE_INTERRUPT_HOT_FRAMES = 4
+WAKE_INTERRUPT_MIN_RMS = 90.0
+WAKE_INTERRUPT_HOT_FRAMES = 3
 PLAYBACK_AUDIBLE_RMS = 20.0
 PLAYBACK_UTTERANCE_GAP_SECONDS = 0.6
 PLAYBACK_INTERRUPT_CUTOFF_SECONDS = 1.2
@@ -713,15 +714,15 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
                         and self._wake_detector.process(data)
                     ):
                         wake_interrupt = True
-                        wake_state["last_wake"] = now
-                    _maybe_interrupt(
+                    interrupted = _maybe_interrupt(
                         data,
                         remote_state,
                         data_channel_holder["channel"],
                         playback_control,
                         wake_word=wake_interrupt,
                     )
-                    if wake_interrupt:
+                    if interrupted:
+                        wake_state["last_wake"] = now
                         open_voice_turn()
                         wake_state["last_activity"] = now
             frame = AudioFrame(format="s16", layout="mono", samples=AUDIO_SAMPLES)
@@ -1519,13 +1520,14 @@ class WakePhraseDetector:
         except ImportError as error:
             raise RuntimeError("PocketSphinx was not installed for offline wake-word detection.") from error
         self._aliases = _wake_phrase_aliases(phrase)
+        self._threshold = _wake_kws_threshold(self._aliases[0])
         # A one-word JSGF has only one legal result, so ordinary room speech is
         # repeatedly forced into the configured name. PocketSphinx's keyphrase
         # search instead compares the wake name against alternative speech and
         # applies its own likelihood-ratio threshold.
         self._decoder = Decoder(
             keyphrase=self._aliases[0],
-            kws_threshold=WAKE_KWS_THRESHOLD,
+            kws_threshold=self._threshold,
             samprate=16_000,
             logfn=os.devnull,
         )
@@ -1578,7 +1580,12 @@ class WakePhraseDetector:
             now,
         )
         if previous_confirmation_frames == 0 and self._confirmation_frames == 1:
-            log.info("GPT Live wake candidate: %s (keyword ratio %.3g)", heard, ratio)
+            log.info(
+                "GPT Live wake candidate: %s (keyword ratio %.3g, audio RMS %.1f)",
+                heard,
+                ratio,
+                _pcm_rms(pcm_48k),
+            )
         if confirmed:
             confirmation_ms = max(
                 0.0,
@@ -1595,6 +1602,13 @@ def _wake_phrase_aliases(phrase):
     # made synthesized playback and ordinary room noise indistinguishable from
     # an owner saying the configured wake name.
     return (normalized,)
+
+
+def _wake_kws_threshold(phrase):
+    """Use a much stricter likelihood ratio for false-prone single names."""
+    if len(str(phrase).split()) == 1:
+        return WAKE_SINGLE_WORD_KWS_THRESHOLD
+    return WAKE_MULTI_WORD_KWS_THRESHOLD
 
 
 def _record_wake_activation(wake_safety, now=None):
@@ -1766,7 +1780,7 @@ def _maybe_interrupt(data, state, channel, playback_control=None, wake_word=Fals
     now = time.monotonic()
     if not _output_is_playing(state, playback_control, now):
         state["hot_frames"] = 0
-        return
+        return False
     rms = _pcm_rms(data)
     if rms >= WAKE_INTERRUPT_MIN_RMS:
         state["hot_frames"] = min(
@@ -1780,13 +1794,13 @@ def _maybe_interrupt(data, state, channel, playback_control=None, wake_word=Fals
     # the capture stream. A fresh offline wake-word detection is deterministic
     # and remains usable even when double-talk attenuation makes speech quiet.
     if not wake_word:
-        return
+        return False
     if state.get("hot_frames", 0) < WAKE_INTERRUPT_HOT_FRAMES:
         log.info(
             "Ignored likely echo wake-to-interrupt at %.1f RMS without sustained near-end speech",
             rms,
         )
-        return
+        return False
     if now - state["last_interrupt"] >= 0.8:
         if playback_control is not None:
             playback_control["cutoff"] = True
@@ -1803,6 +1817,8 @@ def _maybe_interrupt(data, state, channel, playback_control=None, wake_word=Fals
         )
         state["last_interrupt"] = now
         state["hot_frames"] = 0
+        return True
+    return False
 
 
 def _output_is_playing(state, playback_control=None, now=None):

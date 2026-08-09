@@ -70,6 +70,9 @@ delegated tasks at five minutes.
 - Wake detection must use keyphrase spotting, never a one-answer grammar. Six
   accepted detections inside two minutes must enter a silent 30-minute cooldown
   that persists across Live reconnects.
+- Single-word wake names need a stricter keyphrase threshold than multi-word
+  phrases. During playback, a detector hit must not open a backend turn until
+  sustained near-end speech clears the measured echo floor.
 - While GPT Live runs, verify the firmware Chromium capture and playback
   streams are muted; the Ability watchdog must reapply this after restarts.
 - Keep the same Live session so context survives between gated turns.

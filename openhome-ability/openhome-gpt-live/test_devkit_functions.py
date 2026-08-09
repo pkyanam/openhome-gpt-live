@@ -375,7 +375,18 @@ class DevKitProtocolTests(unittest.TestCase):
         aliases = live._wake_phrase_aliases("Juniper")
         self.assertEqual(aliases, ("juniper",))
         self.assertEqual(live._wake_phrase_aliases("Hey-Home"), ("hey home",))
-        self.assertGreater(live.WAKE_KWS_THRESHOLD, 1e-30)
+        self.assertGreater(
+            live.WAKE_SINGLE_WORD_KWS_THRESHOLD,
+            live.WAKE_MULTI_WORD_KWS_THRESHOLD,
+        )
+        self.assertEqual(
+            live._wake_kws_threshold("lara"),
+            live.WAKE_SINGLE_WORD_KWS_THRESHOLD,
+        )
+        self.assertEqual(
+            live._wake_kws_threshold("hey lara"),
+            live.WAKE_MULTI_WORD_KWS_THRESHOLD,
+        )
 
     def test_wake_detector_uses_keyword_search_instead_of_one_word_grammar(self):
         calls = []
@@ -398,7 +409,10 @@ class DevKitProtocolTests(unittest.TestCase):
                 sys.modules["pocketsphinx"] = original
 
         self.assertEqual(calls[0]["keyphrase"], "lara")
-        self.assertEqual(calls[0]["kws_threshold"], live.WAKE_KWS_THRESHOLD)
+        self.assertEqual(
+            calls[0]["kws_threshold"],
+            live.WAKE_SINGLE_WORD_KWS_THRESHOLD,
+        )
         self.assertNotIn("jsgf", calls[0])
 
     def test_repeated_wakes_trip_a_persistent_session_cooldown(self):
@@ -645,14 +659,16 @@ class DevKitProtocolTests(unittest.TestCase):
         playback = {"cutoff": False, "barge_in": False}
         loud_frame = array.array("h", [2_000] * live.AUDIO_SAMPLES).tobytes()
         for _ in range(live.WAKE_INTERRUPT_HOT_FRAMES - 1):
-            live._maybe_interrupt(loud_frame, state, channel, playback)
-        live._maybe_interrupt(
+            self.assertFalse(
+                live._maybe_interrupt(loud_frame, state, channel, playback)
+            )
+        self.assertTrue(live._maybe_interrupt(
             loud_frame,
             state,
             channel,
             playback,
             wake_word=True,
-        )
+        ))
 
         self.assertEqual(channel.messages, [])
         self.assertTrue(playback["cutoff"])
@@ -733,15 +749,44 @@ class DevKitProtocolTests(unittest.TestCase):
             "playing_until": now + 1.0,
         }
         attenuated = array.array("h", [3] * live.AUDIO_SAMPLES).tobytes()
-        live._maybe_interrupt(
+        self.assertFalse(live._maybe_interrupt(
             attenuated,
             state,
             channel,
             playback,
             wake_word=True,
-        )
+        ))
         self.assertEqual(channel.messages, [])
         self.assertFalse(playback["cutoff"])
+
+    def test_sustained_measured_speaker_echo_cannot_open_a_barge_in(self):
+        now = live.time.monotonic()
+        state = {
+            "value": "speaking",
+            "hot_frames": 0,
+            "last_interrupt": 0.0,
+        }
+        playback = {
+            "cutoff": False,
+            "barge_in": False,
+            "started_at": now - 1.0,
+            "playing_until": now + 1.0,
+        }
+        measured_echo = array.array(
+            "h", [60] * live.AUDIO_SAMPLES
+        ).tobytes()
+        for _ in range(live.WAKE_INTERRUPT_HOT_FRAMES * 2):
+            self.assertFalse(
+                live._maybe_interrupt(
+                    measured_echo,
+                    state,
+                    None,
+                    playback,
+                    wake_word=True,
+                )
+            )
+        self.assertFalse(playback["cutoff"])
+        self.assertFalse(playback["barge_in"])
 
     def test_wake_interrupt_requires_sustained_near_end_speech(self):
         now = live.time.monotonic()
@@ -752,7 +797,7 @@ class DevKitProtocolTests(unittest.TestCase):
             "started_at": now - 1.0,
             "playing_until": now + 1.0,
         }
-        speech = array.array("h", [100] * live.AUDIO_SAMPLES).tobytes()
+        speech = array.array("h", [500] * live.AUDIO_SAMPLES).tobytes()
         for _ in range(live.WAKE_INTERRUPT_HOT_FRAMES - 1):
             live._maybe_interrupt(speech, state, None, playback)
         live._maybe_interrupt(speech, state, None, playback, wake_word=True)

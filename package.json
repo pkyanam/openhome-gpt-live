@@ -1,6 +1,6 @@
 {
   "name": "openhome-gpt-live",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "private": true,
   "description": "Use ChatGPT GPT Live as the wake-word voice and Codex tool plane for an OpenHome DevKit.",
   "type": "module",
