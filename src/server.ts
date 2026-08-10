@@ -53,6 +53,7 @@ const codexControl = createCodexControlPolicy({
 const spotify = new OpenHomeSpotifyClient({
   baseUrl: process.env.OPENHOME_SPOTIFY_URL,
   token: process.env.OPENHOME_SPOTIFY_TOOL_TOKEN,
+  allowPrivateHttp: process.env.OPENHOME_SPOTIFY_ALLOW_PRIVATE_HTTP?.trim().toLowerCase() === "true",
 });
 const voiceCommandTranscriber = new LocalWhisperTranscriber({
   enabled: process.env.OPENHOME_LOCAL_VOICE_COMMANDS?.trim().toLowerCase() !== "false",

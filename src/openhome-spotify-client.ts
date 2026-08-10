@@ -4,6 +4,7 @@ export interface OpenHomeSpotifyClientOptions {
   fetch?: (input: string, init?: RequestInit) => Promise<Response>;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  allowPrivateHttp?: boolean;
 }
 
 interface SpotifyAbilityEvent {
@@ -16,6 +17,9 @@ interface SpotifyAbilityRequest {
   tool?: string;
   events?: SpotifyAbilityEvent[];
   error?: { message?: string };
+  speech?: string;
+  mutated?: boolean;
+  requestId?: string;
 }
 
 export interface OpenHomeSpotifyVoiceResult {
@@ -39,7 +43,7 @@ export class OpenHomeSpotifyClient {
     if (Boolean(baseUrl) !== Boolean(token)) {
       throw new Error("OPENHOME_SPOTIFY_URL and OPENHOME_SPOTIFY_TOOL_TOKEN must be configured together.");
     }
-    if (baseUrl) this.baseUrl = validateBaseUrl(baseUrl);
+    if (baseUrl) this.baseUrl = validateBaseUrl(baseUrl, options.allowPrivateHttp ?? false);
     if (token) this.token = token;
     this.configured = Boolean(this.baseUrl && this.token);
     this.fetcher = options.fetch ?? globalThis.fetch;
@@ -53,6 +57,8 @@ export class OpenHomeSpotifyClient {
       method: "POST",
       body: JSON.stringify({ transcript, requestId, ownerId: "openhome-gpt-live" }),
     });
+    const direct = directMessage(accepted);
+    if (direct) return direct;
     const terminal = terminalMessage(accepted);
     if (terminal) return terminal;
 
@@ -82,6 +88,15 @@ export class OpenHomeSpotifyClient {
     }
     return value;
   }
+}
+
+function directMessage(record: SpotifyAbilityRequest): OpenHomeSpotifyVoiceResult | undefined {
+  if (!record.requestId || typeof record.speech !== "string" || typeof record.mutated !== "boolean") return undefined;
+  return {
+    speech: publicMessage(record.speech, "Spotify completed the request."),
+    speakCompletion: !record.mutated,
+    ...(record.tool ? { tool: record.tool } : {}),
+  };
 }
 
 function terminalMessage(record: SpotifyAbilityRequest): OpenHomeSpotifyVoiceResult | undefined {
@@ -124,16 +139,28 @@ function publicMessage(value: unknown, fallback: string): string {
   return normalized && normalized.length <= 400 ? normalized : fallback;
 }
 
-function validateBaseUrl(value: string): string {
+function validateBaseUrl(value: string, allowPrivateHttp: boolean): string {
   const url = new URL(value);
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    throw new Error("OPENHOME_SPOTIFY_URL must use HTTPS unless it is loopback.");
+  const privateLan = isPrivateLanHost(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && (loopback || (allowPrivateHttp && privateLan)))) {
+    throw new Error("OPENHOME_SPOTIFY_URL must use HTTPS unless it is loopback or explicitly allowed private LAN HTTP.");
   }
   if (url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname)) {
     throw new Error("OPENHOME_SPOTIFY_URL must be an origin without credentials, path, query, or fragment.");
   }
   return url.origin;
+}
+
+function isPrivateLanHost(hostname: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+  if (!match) return false;
+  const octets = match.slice(1).map(Number);
+  if (octets.some((octet) => octet < 0 || octet > 255)) return false;
+  return octets[0] === 10
+    || (octets[0] === 172 && octets[1]! >= 16 && octets[1]! <= 31)
+    || (octets[0] === 192 && octets[1] === 168)
+    || (octets[0] === 169 && octets[1] === 254);
 }
 
 function delay(milliseconds: number): Promise<void> {
