@@ -215,6 +215,18 @@ class DevKitProtocolTests(unittest.TestCase):
 
         self.assertGreater(len(pcm16), 16_000)
 
+    def test_voice_command_capture_has_a_bounded_fallback_under_constant_noise(self):
+        noisy = array.array("h", [80] * live.AUDIO_SAMPLES).tobytes()
+        capture = live.VoiceCommandCapture(
+            "voice_turn_noisy_room",
+            [noisy] * live.WAKE_PREROLL_FRAMES,
+            ambient_rms=20.0,
+            now=100.0,
+        )
+
+        self.assertFalse(capture.add(noisy, now=104.9))
+        self.assertTrue(capture.add(noisy, now=105.0))
+
     def test_submits_voice_audio_only_to_the_current_authenticated_live_session(self):
         class Response:
             status_code = 200

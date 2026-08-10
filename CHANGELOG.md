@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.12 - 2026-08-10
+
+- Let a precise local Spotify transcription replace a mistaken native-only
+  claim for the same wake turn without overriding search or Codex work.
+- Submit the local media classifier after at most five seconds in a noisy room
+  instead of waiting for GPT Live to begin speaking.
+
 ## 0.3.11 - 2026-08-10
 
 - Add a local Whisper fast lane that claims routine Spotify requests before
