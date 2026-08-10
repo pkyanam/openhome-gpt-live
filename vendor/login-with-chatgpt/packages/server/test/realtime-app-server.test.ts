@@ -426,6 +426,41 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(executed).toEqual(["play Dreams on Spotify."]);
   });
 
+  test("lets a late local Spotify transcript replace only a mistaken native claim", async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const executed: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: (transcript) => transcript.includes("play") ? "spotify" : "native",
+      executeSpotify: async (transcript) => {
+        executed.push(transcript);
+        return { speech: "Playback started.", speakCompletion: false };
+      },
+    });
+    (session as any).speak = async () => {};
+    mockStartedSession(session, requests);
+    (session as any).startOptions.wakePhrase = "lara";
+    session.beginVoiceTurn("voice_turn_late_spotify");
+    (session as any).handleNotification("turn/started", {
+      threadId: "realtime_thread",
+      turn: { id: "mistaken_native_turn" },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "hand that over" },
+    });
+
+    await expect(session.submitExternalVoiceCommand(
+      "voice_turn_late_spotify",
+      "Lara, play Should I Stay or Should I Go.",
+    )).resolves.toBe("accepted");
+    await settle();
+
+    expect(executed).toEqual(["play Should I Stay or Should I Go."]);
+    expect(requests.some((request) => request.method === "turn/interrupt")).toBe(true);
+  });
+
   test("ignores local transcripts outside the Spotify lane", async () => {
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
     const session = new ChatGPTRealtimeAppServerSession({

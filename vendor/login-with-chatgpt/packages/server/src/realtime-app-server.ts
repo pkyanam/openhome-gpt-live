@@ -71,6 +71,7 @@ export type RealtimeBridgeEvent =
   | { type: "error"; message: string };
 
 export type ExternalVoiceCommandDisposition = "accepted" | "ignored" | "deduplicated";
+type RealtimeHandoffDestination = "codex" | "native" | "openai_search" | "spotify";
 
 export interface RealtimeSpotifyResult {
   speech: string;
@@ -112,7 +113,7 @@ export interface ChatGPTRealtimeAppServerOptions {
    * in GPT Live; `openai_search` and `spotify` run their deterministic service
    * lanes independently. Codex requests start in isolated execution threads.
    */
-  routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search" | "spotify";
+  routeHandoff?: (transcript: string) => RealtimeHandoffDestination;
   /** Classifies an accepted Codex handoff for its execution contract and safety limits. */
   classifyHandoff?: (transcript: string) => "general" | "computer" | "media";
   cwd?: string;
@@ -245,6 +246,7 @@ export class ChatGPTRealtimeAppServerSession {
   private lastMediaHandoffAt?: number;
   private currentVoiceTurnId?: string;
   private claimedVoiceTurnId?: string;
+  private claimedVoiceTurnDestination?: RealtimeHandoffDestination;
   private activeRealtimeTurnId?: string;
   private speechTail: Promise<void> = Promise.resolve();
 
@@ -371,6 +373,7 @@ export class ChatGPTRealtimeAppServerSession {
     if (normalized === this.currentVoiceTurnId) return;
     this.currentVoiceTurnId = normalized;
     this.claimedVoiceTurnId = undefined;
+    this.claimedVoiceTurnDestination = undefined;
   }
 
   /**
@@ -385,7 +388,14 @@ export class ChatGPTRealtimeAppServerSession {
     const transcript = stripWakeWord(rawTranscript.trim(), this.startOptions?.wakePhrase);
     if (!transcript || this.options.routeHandoff?.(transcript) !== "spotify") return "ignored";
     this.beginVoiceTurn(turnId);
-    if (this.claimedVoiceTurnId === this.currentVoiceTurnId) return "deduplicated";
+    if (this.claimedVoiceTurnId === this.currentVoiceTurnId) {
+      // `/wm` sometimes emits a vague native correction before the local
+      // transcription finishes. A precise, locally transcribed Spotify
+      // command is allowed to replace only that non-mutating native claim.
+      if (this.claimedVoiceTurnDestination !== "native") return "deduplicated";
+      this.claimedVoiceTurnId = undefined;
+      this.claimedVoiceTurnDestination = undefined;
+    }
     if (this.threadId && this.activeRealtimeTurnId) {
       await this.interruptTurn(this.threadId, this.activeRealtimeTurnId);
       this.activeRealtimeTurnId = undefined;
@@ -727,6 +737,7 @@ export class ChatGPTRealtimeAppServerSession {
         : "").trim();
     const transcript = stripWakeWord(rawTranscript, this.startOptions?.wakePhrase);
     if (!transcript) return;
+    const destination = this.options.routeHandoff?.(transcript) ?? "codex";
     if (
       this.currentVoiceTurnId
       && this.claimedVoiceTurnId === this.currentVoiceTurnId
@@ -734,7 +745,10 @@ export class ChatGPTRealtimeAppServerSession {
       this.emit({ type: "handoff.deduplicated", transcript });
       return;
     }
-    if (this.currentVoiceTurnId) this.claimedVoiceTurnId = this.currentVoiceTurnId;
+    if (this.currentVoiceTurnId) {
+      this.claimedVoiceTurnId = this.currentVoiceTurnId;
+      this.claimedVoiceTurnDestination = destination;
+    }
     const normalizedTranscript = normalizeTranscript(transcript);
     const now = this.nowMs();
     for (const [key, seenAt] of this.recentHandoffs) {
@@ -749,7 +763,6 @@ export class ChatGPTRealtimeAppServerSession {
     for (const [key, seenAt] of this.recentSpotifyRequests) {
       if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentSpotifyRequests.delete(key);
     }
-    const destination = this.options.routeHandoff?.(transcript) ?? "codex";
     if (destination === "native") {
       const redirectKey = nativeRedirectKey(transcript);
       if (
@@ -765,7 +778,7 @@ export class ChatGPTRealtimeAppServerSession {
       this.recentNativeRedirects.set(redirectKey, now);
       this.lastNativeRedirectAt = now;
       this.emit({ type: "handoff.redirected", transcript, destination: "native" });
-      void this.retryNativeHandoff(transcript).catch(() => this.emit({
+      void this.retryNativeHandoff(transcript, this.currentVoiceTurnId).catch(() => this.emit({
         type: "error",
         message: "The native GPT Live retry failed.",
       }));
@@ -952,8 +965,12 @@ export class ChatGPTRealtimeAppServerSession {
     }
   }
 
-  private async retryNativeHandoff(transcript: string): Promise<void> {
+  private async retryNativeHandoff(transcript: string, voiceTurnId?: string): Promise<void> {
     if (!this.threadId) return;
+    if (voiceTurnId && (
+      this.currentVoiceTurnId !== voiceTurnId
+      || this.claimedVoiceTurnDestination !== "native"
+    )) return;
     await this.expectResult("thread/realtime/appendText", {
       threadId: this.threadId,
       role: "developer",
@@ -961,6 +978,10 @@ export class ChatGPTRealtimeAppServerSession {
         "Routing correction: the immediately preceding request is native-only. Do not create a delegation. " +
         "Use GPT Live's first-party web search or current-information capability and answer it directly now.",
     }, 5_000);
+    if (voiceTurnId && (
+      this.currentVoiceTurnId !== voiceTurnId
+      || this.claimedVoiceTurnDestination !== "native"
+    )) return;
     await this.expectResult("thread/realtime/appendText", {
       threadId: this.threadId,
       role: "user",
