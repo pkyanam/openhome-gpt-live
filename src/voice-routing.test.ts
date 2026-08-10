@@ -25,8 +25,16 @@ describe("speaker voice routing", () => {
     expect(routeVoiceRequest("queue Go Your Own Way", true)).toBe("spotify");
     expect(routeVoiceRequest("set Spotify volume to 20 percent", true)).toBe("spotify");
     expect(routeVoiceRequest("what's playing", true)).toBe("spotify");
+    expect(routeVoiceRequest("open the Spotify app and play Dreams by Fleetwood Mac", true)).toBe("spotify");
+    expect(routeVoiceRequest("use Spotify to play Dreams by Fleetwood Mac", true)).toBe("spotify");
+    expect(routeVoiceRequest("I want you to put on Dreams by Fleetwood Mac", true)).toBe("spotify");
+    expect(routeVoiceRequest("control Spotify", true)).toBe("spotify");
+    expect(routeVoiceRequest("open Spotify", true)).toBe("spotify");
+    expect(routeVoiceRequest("search Spotify and play the first matching song", true)).toBe("spotify");
+    expect(routeVoiceRequest("play today's top hits on Spotify", true)).toBe("spotify");
     expect(routeVoiceRequest("play a song on YouTube", true)).toBe("codex");
-    expect(routeVoiceRequest("control Spotify", true)).toBe("codex");
+    expect(routeVoiceRequest("play Dreams in the Spotify app on my Mac", true)).toBe("codex");
+    expect(routeVoiceRequest("open Spotify in the browser on my computer", true)).toBe("codex");
     expect(routeVoiceRequest("play Dreams by Fleetwood Mac")).toBe("codex");
   });
 

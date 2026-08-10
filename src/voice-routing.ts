@@ -35,13 +35,23 @@ export function routeVoiceRequest(transcript: string, spotifyConfigured = false)
 export function isSpotifyAbilityRequest(transcript: string): boolean {
   const text = transcript
     .replace(/^\s*[a-z][a-z0-9 -]{0,30}\s*[,;]\s*/i, "")
-    .replace(/^\s*(?:please|can you|could you|would you)\s+/i, "")
+    .replace(/^\s*(?:please\s+)?(?:can|could|would|will)\s+you\s+/i, "")
+    .replace(/^\s*(?:please\s+)?(?:i\s+(?:want|need)\s+(?:you\s+)?to|go\s+ahead\s+and)\s+/i, "")
     .trim();
-  if (/\b(?:youtube|apple music|soundcloud|browser|video)\b/i.test(text)) return false;
-  if (/\bsearch(?: spotify)?\b[\s\S]*\band\s+(?:play|queue|pick|choose)\b/i.test(text)) return false;
+  // An explicit non-speaker target remains an intentional Codex/computer
+  // request. Merely saying "Spotify app" is not enough to launch software on
+  // the paired Mac from a speaker command.
+  if (/\b(?:youtube|apple music|soundcloud|video)\b/i.test(text)) return false;
+  if (/\b(?:on|using|through|in)\s+(?:my\s+|the\s+)?(?:mac|macbook|computer|desktop|browser|helium|chrome|safari)\b/i.test(text)) return false;
   if (/\b(?:what is|explain|tell me about)\s+spotify\b/i.test(text)) return false;
-  if (/^(?:play|listen to)\s+\S/i.test(text)) {
+  if (/^(?:play|listen to|start playing|put on)\s+\S/i.test(text)) {
     return !/\b(?:game|chess|poker|checkers|sports?|a role|devil'?s advocate)\b/i.test(text);
+  }
+  if (/^(?:open|launch|use)\s+(?:the\s+)?spotify(?:\s+app)?(?:\s+and|\s+to)?\s+(?:play|listen to|start|put on)\s+\S/i.test(text)) {
+    return true;
+  }
+  if (/\bspotify\b/i.test(text) && /\b(?:open|launch|start|play|listen|music|song|track|album|artist|playlist|podcast|queue|pause|resume|skip|next|previous|seek|volume|shuffle|repeat|now playing|what(?:'s| is) playing|search|find|control)\b/i.test(text)) {
+    return true;
   }
   return [
     /^(?:pause|stop|resume|continue|unpause)(?: spotify| the (?:music|song|track|podcast))?[?.!]*$/i,

@@ -165,8 +165,11 @@ auth = createChatGPTHandler({
         "changing files in the " +
         "configured local workspace, or controlling the paired Mac through Codex. " +
         (spotify.configured
-          ? "Hand off routine play, search, pause, resume, queue, skip, seek, volume, device, and now-playing requests; " +
-            "the bridge routes them to the separate Spotify Ability without Codex. "
+          ? "You have no direct music-player or Spotify-app control. For every music or Spotify play, search, pause, " +
+            "resume, queue, skip, seek, volume, device, or now-playing request, immediately create exactly one native " +
+            "backend handoff using the user's request verbatim. Do not open an app, answer as though playback happened, " +
+            "or rewrite the request as a Mac/computer task. The bridge routes it to the separate speaker Spotify Ability " +
+            "without Codex. Only an explicit request naming the Mac, computer, browser, or another service may bypass it. "
           : "") +
         (fullCodexAccess
           ? "Mac control is owner-authorized for direct delegated execution without browser confirmation. "
