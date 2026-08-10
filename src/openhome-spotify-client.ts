@@ -13,8 +13,15 @@ interface SpotifyAbilityEvent {
 
 interface SpotifyAbilityRequest {
   status?: string;
+  tool?: string;
   events?: SpotifyAbilityEvent[];
   error?: { message?: string };
+}
+
+export interface OpenHomeSpotifyVoiceResult {
+  speech: string;
+  speakCompletion: boolean;
+  tool?: string;
 }
 
 /** Optional, narrowly scoped client for the separate openhome-spotify service. */
@@ -40,7 +47,7 @@ export class OpenHomeSpotifyClient {
     this.timeoutMs = options.timeoutMs ?? 90_000;
   }
 
-  async executeVoice(transcript: string, requestId: string): Promise<string> {
+  async executeVoice(transcript: string, requestId: string): Promise<OpenHomeSpotifyVoiceResult> {
     if (!this.baseUrl || !this.token) throw new Error("Spotify is not configured for this speaker.");
     const accepted = await this.request("/v1/voice/execute", {
       method: "POST",
@@ -77,7 +84,7 @@ export class OpenHomeSpotifyClient {
   }
 }
 
-function terminalMessage(record: SpotifyAbilityRequest): string | undefined {
+function terminalMessage(record: SpotifyAbilityRequest): OpenHomeSpotifyVoiceResult | undefined {
   if (record.status !== "completed" && record.status !== "failed") return undefined;
   const events = Array.isArray(record.events) ? record.events : [];
   const event = [...events].reverse().find((candidate) =>
@@ -88,7 +95,27 @@ function terminalMessage(record: SpotifyAbilityRequest): string | undefined {
     : "I couldn’t complete that Spotify request. Please try again.";
   const message = publicMessage(event?.message, fallback);
   if (record.status === "failed") throw new Error(message);
-  return message;
+  return {
+    speech: message,
+    speakCompletion: !isMutatingSpotifyTool(record.tool),
+    ...(record.tool ? { tool: record.tool } : {}),
+  };
+}
+
+const MUTATING_SPOTIFY_TOOLS = new Set([
+  "spotify.play",
+  "spotify.pause",
+  "spotify.resume",
+  "spotify.queue",
+  "spotify.next",
+  "spotify.previous",
+  "spotify.seek",
+  "spotify.volume",
+  "spotify.device.select",
+]);
+
+function isMutatingSpotifyTool(tool: string | undefined): boolean {
+  return Boolean(tool && MUTATING_SPOTIFY_TOOLS.has(tool));
 }
 
 function publicMessage(value: unknown, fallback: string): string {

@@ -2,6 +2,7 @@
 
 import array
 import asyncio
+import base64
 from collections import deque
 from fractions import Fraction
 import json
@@ -64,7 +65,7 @@ RECONNECT_MAX_SECONDS = 30.0
 # recv() still drains one fresh capture frame into the bounded queue on every
 # call, so the parec pipe cannot fill and discard the rest of the prompt.
 WAKE_PREROLL_FRAMES = 25
-WAKE_SINGLE_WORD_KWS_THRESHOLD = 1e-1
+WAKE_SINGLE_WORD_KWS_THRESHOLD = 3e-2
 WAKE_MULTI_WORD_KWS_THRESHOLD = 1e-6
 WAKE_GRAMMAR_SCORE_THRESHOLD = 0.80
 WAKE_CONFIRM_FRAMES = 3
@@ -72,8 +73,12 @@ WAKE_CONFIRM_WINDOW_SECONDS = 0.8
 WAKE_RATE_LIMIT = 6
 WAKE_RATE_WINDOW_SECONDS = 2 * 60
 WAKE_LOCKOUT_SECONDS = 30 * 60
-WAKE_SILENCE_RMS = 20.0
-WAKE_SILENCE_FRAMES = 25
+# The AEC source is intentionally quiet: real owner wake hits have measured
+# roughly 3-9 RMS. The old 20-RMS boundary reset PocketSphinx in the middle of
+# those words, which made the first wake attempt unreliable.
+WAKE_SILENCE_RMS = 1.5
+WAKE_SILENCE_FRAMES = 40
+WAKE_FORCED_RESET_FRAMES = 2_500
 WAKE_INTERRUPT_GUARD_SECONDS = 1.0
 WAKE_INTERRUPT_MIN_RMS = 90.0
 WAKE_INTERRUPT_HOT_FRAMES = 3
@@ -84,10 +89,12 @@ PLAYBACK_JITTER_BUFFER_FRAMES = 8
 PLAYBACK_FRAME_GAP_WARNING_SECONDS = 0.08
 REQUEST_SPEECH_RMS = 40.0
 REQUEST_END_SILENCE_SECONDS = 0.8
-# `/wm` can take longer to emit a client-managed tool handoff than it takes to
-# answer an ordinary knowledge question. Give music/search/tool turns the full
-# configured active window before declaring the otherwise-open transport stale.
-REQUEST_RESPONSE_TIMEOUT_SECONDS = 30.0
+REQUEST_RESPONSE_TIMEOUT_SECONDS = 12.0
+VOICE_COMMAND_END_SILENCE_SECONDS = 0.55
+VOICE_COMMAND_MIN_SECONDS = 1.0
+VOICE_COMMAND_MAX_SECONDS = 15.0
+VOICE_COMMAND_MIN_SPEECH_RMS = 1.5
+VOICE_COMMAND_SPEECH_RATIO = 1.8
 GPT_LIVE_READY_STATES = {"idle", "connected", "listening", "listening_intently"}
 DEFAULT_AGENT_GUARD_INTERVAL_SECONDS = 1.0
 
@@ -366,6 +373,7 @@ def _is_default_agent_audio_stream(stream):
     return (
         properties.get("application.process.binary") == "chromium"
         and properties.get("application.id") != "com.openhome.spotify"
+        and properties.get("application.name") != "OpenHome Spotify"
     )
 
 
@@ -538,9 +546,10 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
     def open_voice_turn():
         if not live_session_id:
             log.warning("Could not mark the GPT Live wake transaction before signaling completed")
-            return
+            return None
+        turn_id = uuid.uuid4().hex
         task = asyncio.create_task(
-            _announce_voice_turn(client, config, live_session_id, uuid.uuid4().hex)
+            _announce_voice_turn(client, config, live_session_id, turn_id)
         )
         control_tasks.add(task)
 
@@ -553,6 +562,7 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
                 log.warning("Could not open the GPT Live wake transaction: %s", error)
 
         task.add_done_callback(completed)
+        return turn_id
 
     class AlsaInputTrack(MediaStreamTrack):
         kind = "audio"
@@ -566,6 +576,37 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
             self._preroll = deque(maxlen=WAKE_PREROLL_FRAMES)
             self._pending = deque()
             self._process = _open_capture_process(device)
+            self._voice_command_capture = None
+
+        def _submit_voice_command(self, capture):
+            if not live_session_id:
+                return
+            task = asyncio.create_task(
+                _submit_voice_command_audio(
+                    client,
+                    config,
+                    live_session_id,
+                    capture.turn_id,
+                    capture.finish(),
+                )
+            )
+            control_tasks.add(task)
+
+            def completed(done):
+                control_tasks.discard(done)
+                if done.cancelled():
+                    return
+                error = done.exception()
+                if error is not None:
+                    log.warning("Local voice-command routing failed: %s", error)
+
+            task.add_done_callback(completed)
+
+        def _finish_voice_command_capture(self):
+            capture = self._voice_command_capture
+            self._voice_command_capture = None
+            if capture is not None and capture.ready:
+                self._submit_voice_command(capture)
             if self._process.stdout is None:
                 raise RuntimeError("Could not open the microphone stream.")
 
@@ -580,6 +621,7 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
             )
             if was_active:
                 log.info("GPT Live microphone re-armed after %s", reason)
+            self._voice_command_capture = None
             return was_active
 
         async def recv(self):
@@ -643,7 +685,7 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
                     connection_closed.set()
                     data = bytes(AUDIO_BYTES)
                 elif wake_detected:
-                    open_voice_turn()
+                    turn_id = open_voice_turn()
                     wake_state["active"] = True
                     wake_state["assistant_response_seen"] = False
                     wake_state["last_activity"] = now
@@ -651,6 +693,13 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
                     wake_state["last_user_speech"] = now
                     wake_state["response_latency_logged"] = False
                     self._pending.extend(self._preroll)
+                    if turn_id:
+                        self._voice_command_capture = VoiceCommandCapture(
+                            turn_id,
+                            tuple(self._preroll),
+                            self._wake_detector.ambient_rms,
+                            now,
+                        )
                     self._preroll.clear()
                     log.info(
                         "GPT Live wake gate is forwarding %d ms of buffered audio",
@@ -696,6 +745,10 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
                 data = bytes(AUDIO_BYTES)
             else:
                 now = time.monotonic()
+                capture = self._voice_command_capture
+                if capture is not None and capture.add(live_data, now):
+                    self._voice_command_capture = None
+                    self._submit_voice_command(capture)
                 if _pcm_rms(data) >= REQUEST_SPEECH_RMS:
                     wake_state["last_user_speech"] = now
                 if _should_arm_after_response_audio(
@@ -830,6 +883,7 @@ async def _run_live_session(client, config, model, stop_event, wake_safety=None)
     def on_track(track):
         if track.kind == "audio":
             def on_remote_speech_started():
+                input_track._finish_voice_command_capture()
                 if wake_state["active"]:
                     wake_state["assistant_response_seen"] = True
                     if not wake_state.get("response_latency_logged"):
@@ -1076,6 +1130,35 @@ async def _announce_voice_turn(client, config, live_session_id, turn_id):
         json={"turnId": turn_id},
     )
     response.raise_for_status()
+
+
+async def _submit_voice_command_audio(
+    client,
+    config,
+    live_session_id,
+    turn_id,
+    pcm16,
+):
+    """Offer one locally buffered utterance to the Spotify-only fast lane."""
+    if len(pcm16) < 16_000:
+        return "ignored"
+    response = await client.post(
+        _device_path(config, f"/realtime/app-server/{live_session_id}/voice-command"),
+        json={
+            "turnId": turn_id,
+            "pcm16": base64.b64encode(pcm16).decode("ascii"),
+        },
+        timeout=20.0,
+    )
+    if response.status_code in (404, 501):
+        return "unsupported"
+    response.raise_for_status()
+    status = response.json().get("status", "ignored")
+    if status == "accepted":
+        log.info("Local voice command claimed the current turn for Spotify")
+    elif status == "deduplicated":
+        log.info("Local voice command matched a turn already claimed by GPT Live")
+    return status
 
 
 def decode_realtime_event(message):
@@ -1519,6 +1602,48 @@ def _pactl_output(*arguments):
     ).stdout
 
 
+class VoiceCommandCapture:
+    """Bounded local utterance buffer for deterministic media classification."""
+
+    def __init__(self, turn_id, preroll_frames, ambient_rms, now=None):
+        now = time.monotonic() if now is None else now
+        self.turn_id = turn_id
+        self._started_at = now
+        self._last_speech_at = now
+        self._speech_threshold = max(
+            VOICE_COMMAND_MIN_SPEECH_RMS,
+            float(ambient_rms or 0.0) * VOICE_COMMAND_SPEECH_RATIO,
+        )
+        self._pcm16 = bytearray()
+        self._finished = False
+        for frame in preroll_frames:
+            self._pcm16.extend(_downsample_48k_to_16k(frame))
+
+    @property
+    def ready(self):
+        return not self._finished and len(self._pcm16) >= 16_000
+
+    def add(self, pcm_48k, now=None):
+        if self._finished:
+            return False
+        now = time.monotonic() if now is None else now
+        self._pcm16.extend(_downsample_48k_to_16k(pcm_48k))
+        if _pcm_rms(pcm_48k) >= self._speech_threshold:
+            self._last_speech_at = now
+        elapsed = now - self._started_at
+        return (
+            elapsed >= VOICE_COMMAND_MAX_SECONDS
+            or (
+                elapsed >= VOICE_COMMAND_MIN_SECONDS
+                and now - self._last_speech_at >= VOICE_COMMAND_END_SILENCE_SECONDS
+            )
+        )
+
+    def finish(self):
+        self._finished = True
+        return bytes(self._pcm16)
+
+
 class WakePhraseDetector:
     """Offline keyword spotter; microphone audio never leaves the DevKit while armed."""
 
@@ -1543,7 +1668,13 @@ class WakePhraseDetector:
         self._confirmation_deadline = 0.0
         self._quiet_frames = 0
         self._frames_seen = 0
+        self._frames_since_reset = 0
+        self._ambient_rms = WAKE_SILENCE_RMS / 3.0
         self._decoder.start_utt()
+
+    @property
+    def ambient_rms(self):
+        return self._ambient_rms
 
     def reset(self):
         self._decoder.end_utt()
@@ -1551,16 +1682,27 @@ class WakePhraseDetector:
         self._confirmation_frames = 0
         self._confirmation_deadline = 0.0
         self._quiet_frames = 0
+        self._frames_since_reset = 0
 
     def process(self, pcm_48k):
         self._frames_seen += 1
+        self._frames_since_reset += 1
         if self._frames_seen == 1:
             log.info("GPT Live wake detector is receiving microphone audio")
         elif self._frames_seen == 250:
             log.info("GPT Live wake detector microphone stream is continuous")
+        rms = _pcm_rms(pcm_48k)
+        if self._ambient_rms <= 0.0:
+            self._ambient_rms = rms
+        elif rms <= max(self._ambient_rms * 3.0, WAKE_SILENCE_RMS * 2.0):
+            self._ambient_rms = self._ambient_rms * 0.98 + rms * 0.02
         self._quiet_frames, should_reset = _advance_wake_silence(
             self._quiet_frames,
             pcm_48k,
+        )
+        should_reset = should_reset or (
+            self._frames_since_reset >= WAKE_FORCED_RESET_FRAMES
+            and self._confirmation_frames == 0
         )
         if should_reset:
             # Grammar decoding is utterance-oriented. Without silence
@@ -1592,7 +1734,7 @@ class WakePhraseDetector:
                 "GPT Live wake candidate: %s (keyword ratio %.3g, audio RMS %.1f)",
                 heard,
                 ratio,
-                _pcm_rms(pcm_48k),
+                rms,
             )
         if confirmed:
             confirmation_ms = max(

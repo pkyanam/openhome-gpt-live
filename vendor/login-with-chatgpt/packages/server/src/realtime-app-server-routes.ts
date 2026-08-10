@@ -3,11 +3,14 @@ import type {
   ChatGPTTokens,
   ReasoningEffort,
 } from "@opencoredev/loginwithchatgpt-core";
+import { Buffer } from "node:buffer";
 import type {
   ChatGPTRealtimeAppServerOptions,
+  ExternalVoiceCommandDisposition,
   RealtimeBridgeEvent,
   RealtimeConfirmationResult,
   RealtimeDynamicTool,
+  RealtimeSpotifyResult,
   RealtimeToolContext,
   RealtimeToolResult,
   StartRealtimeAppServerOptions,
@@ -49,6 +52,14 @@ export interface RealtimeAppServerSpotifyContext extends RealtimeAppServerSearch
   requestId: string;
 }
 
+export interface RealtimeAppServerVoiceTranscriptionContext {
+  loginSessionId: string;
+  liveSessionId: string;
+  request: Request;
+  pcm16: Uint8Array;
+  sampleRate: 16_000;
+}
+
 /** Minimal process/session contract required by the HTTP lifecycle manager. */
 export interface RealtimeAppServerSessionHandle {
   readonly id: string;
@@ -60,6 +71,10 @@ export interface RealtimeAppServerSessionHandle {
   ): Promise<unknown>;
   refreshClock?(): Promise<void>;
   beginVoiceTurn?(turnId: string): void;
+  submitExternalVoiceCommand?(
+    turnId: string,
+    transcript: string,
+  ): Promise<ExternalVoiceCommandDisposition>;
   close(): Promise<void>;
 }
 
@@ -91,9 +106,13 @@ export interface RealtimeAppServerPolicy {
   /** Spoken after the OpenAI search lane accepts a handoff. */
   searchAcknowledgement?: string | ((transcript: string) => string | undefined);
   /** Runs routine playback commands through the separately configured Spotify Ability. */
-  executeSpotify?: (context: RealtimeAppServerSpotifyContext) => Promise<string>;
+  executeSpotify?: (
+    context: RealtimeAppServerSpotifyContext,
+  ) => Promise<string | RealtimeSpotifyResult>;
   /** Spoken before the Spotify Ability begins the action. */
   spotifyAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Optional local STT for a deterministic Spotify-only fast lane. */
+  transcribeVoiceCommand?: (context: RealtimeAppServerVoiceTranscriptionContext) => Promise<string>;
   /** Routes requests away from the automatic Codex turn when appropriate. */
   routeHandoff?: (transcript: string) => "codex" | "native" | "openai_search" | "spotify";
   /** Classifies accepted Codex work for task-specific execution limits. */
@@ -520,11 +539,67 @@ export function createRealtimeAppServerRoutes(options: {
     }
   }
 
+  async function submitVoiceCommand(request: Request, liveSessionId: string): Promise<Response> {
+    if (!policy.transcribeVoiceCommand) {
+      return json({ error: "realtime_voice_command_not_configured" }, { status: 501 });
+    }
+    const ownerSessionId = await options.readSessionId(request);
+    if (!ownerSessionId) return json({ error: "not_authenticated" }, { status: 401 });
+    const managed = getSession(liveSessionId, ownerSessionId);
+    if (!managed) return json({ error: "realtime_session_not_found" }, { status: 404 });
+    if (!managed.session.submitExternalVoiceCommand) {
+      return json({ error: "realtime_voice_command_not_supported" }, { status: 501 });
+    }
+
+    let payload: unknown;
+    try {
+      const body = await readTextBody(request, options.maxRequestBytes);
+      if (body === undefined) {
+        return json(
+          { error: "realtime_request_too_large", maxRequestBytes: options.maxRequestBytes },
+          { status: 413 },
+        );
+      }
+      payload = JSON.parse(body);
+    } catch {
+      return json({ error: "invalid_realtime_voice_command" }, { status: 400 });
+    }
+    const turnId = isRecord(payload) ? payload["turnId"] : undefined;
+    const encoded = isRecord(payload) ? payload["pcm16"] : undefined;
+    if (
+      typeof turnId !== "string"
+      || typeof encoded !== "string"
+      || encoded.length < 1_000
+      || encoded.length > 1_000_000
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+    ) {
+      return json({ error: "invalid_realtime_voice_command" }, { status: 400 });
+    }
+    const pcm16 = Uint8Array.from(Buffer.from(encoded, "base64"));
+    if (pcm16.byteLength < 16_000 || pcm16.byteLength > 16_000 * 2 * 20) {
+      return json({ error: "invalid_realtime_voice_command_duration" }, { status: 400 });
+    }
+
+    try {
+      const transcript = await policy.transcribeVoiceCommand({
+        loginSessionId: ownerSessionId,
+        liveSessionId,
+        request: new Request(request.url, { headers: request.headers }),
+        pcm16,
+        sampleRate: 16_000,
+      });
+      const status = await managed.session.submitExternalVoiceCommand(turnId, transcript);
+      return json({ status });
+    } catch {
+      return json({ error: "realtime_voice_command_failed" }, { status: 502 });
+    }
+  }
+
   return {
     start,
     closeOwner: (ownerSessionId) => withOwnerLock(ownerSessionId, () => closeOwnerUnlocked(ownerSessionId)),
     methods(route) {
-      const match = /^\/realtime\/app-server\/([^/]+)(?:\/(events|confirm|clock|turn))?$/.exec(route);
+      const match = /^\/realtime\/app-server\/([^/]+)(?:\/(events|confirm|clock|turn|voice-command))?$/.exec(route);
       if (!match?.[1]) return undefined;
       let liveSessionId: string;
       try {
@@ -540,6 +615,8 @@ export function createRealtimeAppServerRoutes(options: {
             ? { POST: (request) => refreshClock(request, liveSessionId) }
           : match[2] === "turn"
             ? { POST: (request) => beginVoiceTurn(request, liveSessionId) }
+          : match[2] === "voice-command"
+            ? { POST: (request) => submitVoiceCommand(request, liveSessionId) }
           : { DELETE: (request) => close(request, liveSessionId) };
     },
   };

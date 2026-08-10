@@ -154,6 +154,17 @@ describe("headless DevKit routes", () => {
     );
     expect(await forwardedTurn?.json()).toEqual({ turnId: "voice_turn_0001" });
 
+    const voiceCommandResponse = await route(jsonRequest(
+      `${deviceBase}/realtime/app-server/live-1/voice-command`,
+      {
+        method: "POST",
+        bearer: registration.deviceToken,
+        body: { turnId: "voice_turn_0001", pcm16: "AA==" },
+      },
+    ));
+    expect(voiceCommandResponse.status).toBe(200);
+    expect(await voiceCommandResponse.json()).toEqual({ status: "accepted" });
+
     const eventsResponse = await route(new Request(`${deviceBase}/realtime/app-server/live-1/events`, {
       headers: { authorization: `Bearer ${registration.deviceToken}` },
     }));
@@ -256,6 +267,9 @@ function fakeAuth(
     }
     if (path === "/realtime/app-server/live-1/turn" && request.method === "POST") {
       return Response.json({ status: "opened", turnId: "voice_turn_0001" });
+    }
+    if (path === "/realtime/app-server/live-1/voice-command" && request.method === "POST") {
+      return Response.json({ status: "accepted" });
     }
     if (path === "/realtime/app-server/live-1/events") {
       const event = {

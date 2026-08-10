@@ -70,6 +70,14 @@ export type RealtimeBridgeEvent =
   | { type: "tool.failed"; callId?: string; name?: string; message: string }
   | { type: "error"; message: string };
 
+export type ExternalVoiceCommandDisposition = "accepted" | "ignored" | "deduplicated";
+
+export interface RealtimeSpotifyResult {
+  speech: string;
+  /** Music itself is the success signal for mutations; status queries still speak. */
+  speakCompletion?: boolean;
+}
+
 export interface ChatGPTRealtimeAppServerOptions {
   tokens: ChatGPTTokens;
   refreshTokens?: () => Promise<ChatGPTTokens>;
@@ -93,7 +101,10 @@ export interface ChatGPTRealtimeAppServerOptions {
   /** Spoken immediately after the OpenAI search lane accepts a handoff. */
   searchAcknowledgement?: string | ((transcript: string) => string | undefined);
   /** Runs a routine media command through the separate OpenHome Spotify Ability. */
-  executeSpotify?: (transcript: string, requestId: string) => Promise<string>;
+  executeSpotify?: (
+    transcript: string,
+    requestId: string,
+  ) => Promise<string | RealtimeSpotifyResult>;
   /** Spoken before the Spotify Ability begins resolving or mutating playback. */
   spotifyAcknowledgement?: string | ((transcript: string) => string | undefined);
   /**
@@ -234,6 +245,7 @@ export class ChatGPTRealtimeAppServerSession {
   private lastMediaHandoffAt?: number;
   private currentVoiceTurnId?: string;
   private claimedVoiceTurnId?: string;
+  private activeRealtimeTurnId?: string;
   private speechTail: Promise<void> = Promise.resolve();
 
   constructor(options: ChatGPTRealtimeAppServerOptions) {
@@ -359,6 +371,27 @@ export class ChatGPTRealtimeAppServerSession {
     if (normalized === this.currentVoiceTurnId) return;
     this.currentVoiceTurnId = normalized;
     this.claimedVoiceTurnId = undefined;
+  }
+
+  /**
+   * Claims a locally transcribed speaker-media command before `/wm` decides
+   * whether to emit a handoff. Only the Spotify lane is accepted here;
+   * conversation, search, and Codex routing remain native GPT Live behavior.
+   */
+  async submitExternalVoiceCommand(
+    turnId: string,
+    rawTranscript: string,
+  ): Promise<ExternalVoiceCommandDisposition> {
+    const transcript = stripWakeWord(rawTranscript.trim(), this.startOptions?.wakePhrase);
+    if (!transcript || this.options.routeHandoff?.(transcript) !== "spotify") return "ignored";
+    this.beginVoiceTurn(turnId);
+    if (this.claimedVoiceTurnId === this.currentVoiceTurnId) return "deduplicated";
+    if (this.threadId && this.activeRealtimeTurnId) {
+      await this.interruptTurn(this.threadId, this.activeRealtimeTurnId);
+      this.activeRealtimeTurnId = undefined;
+    }
+    this.handleHandoff({ type: "handoff_request", input_transcript: transcript });
+    return this.claimedVoiceTurnId === this.currentVoiceTurnId ? "accepted" : "deduplicated";
   }
 
   onEvent(listener: (event: RealtimeBridgeEvent) => void): () => void {
@@ -654,6 +687,9 @@ export class ChatGPTRealtimeAppServerSession {
     } else if (method === "turn/started") {
       const threadId = typeof params["threadId"] === "string" ? params["threadId"] : undefined;
       const turn = asRecord(params["turn"]);
+      if (threadId === this.threadId && typeof turn?.["id"] === "string") {
+        this.activeRealtimeTurnId = turn["id"];
+      }
       const task = threadId ? this.tasksByThreadId.get(threadId) : undefined;
       if (task && !task.turnId && typeof turn?.["id"] === "string") {
         task.turnId = turn["id"];
@@ -663,6 +699,15 @@ export class ChatGPTRealtimeAppServerSession {
     } else if (method === "item/completed") {
       this.handleItemCompleted(params);
     } else if (method === "turn/completed") {
+      const threadId = typeof params["threadId"] === "string" ? params["threadId"] : undefined;
+      const turn = asRecord(params["turn"]);
+      if (
+        threadId === this.threadId
+        && typeof turn?.["id"] === "string"
+        && turn["id"] === this.activeRealtimeTurnId
+      ) {
+        this.activeRealtimeTurnId = undefined;
+      }
       void this.handleTurnCompleted(params).catch(() => this.emit({
         type: "error",
         message: "Codex finished, but task completion handling failed.",
@@ -888,8 +933,11 @@ export class ChatGPTRealtimeAppServerSession {
         : configured ?? "Starting that on Spotify now.";
       if (acknowledgement?.trim()) await this.speak(acknowledgement);
       const result = await this.options.executeSpotify!(spotify.transcript, spotify.id);
-      if (!result.trim()) throw new Error("The Spotify Ability returned no result.");
-      await this.speak(result);
+      const speech = typeof result === "string" ? result : result.speech;
+      if (!speech.trim()) throw new Error("The Spotify Ability returned no result.");
+      if (typeof result === "string" || result.speakCompletion !== false) {
+        await this.speak(speech);
+      }
     } catch {
       status = "failed";
       await this.speak("I couldn’t complete that Spotify request. Please try again.").catch(() => {});

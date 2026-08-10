@@ -26,6 +26,7 @@ describe("OpenHomeSpotifyClient", () => {
       }
       return Response.json({
         status: "completed",
+        tool: "spotify.play",
         events: [{ type: "spotify.completion", message: "Dreams by Fleetwood Mac is playing." }],
       });
     };
@@ -37,7 +38,11 @@ describe("OpenHomeSpotifyClient", () => {
     });
 
     await expect(client.executeVoice("play Dreams by Fleetwood Mac", "spotify-request-1"))
-      .resolves.toBe("Dreams by Fleetwood Mac is playing.");
+      .resolves.toEqual({
+        speech: "Dreams by Fleetwood Mac is playing.",
+        speakCompletion: false,
+        tool: "spotify.play",
+      });
     expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({
       method: "POST",

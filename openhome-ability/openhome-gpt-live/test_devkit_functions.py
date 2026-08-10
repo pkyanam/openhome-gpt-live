@@ -197,6 +197,59 @@ class DevKitProtocolTests(unittest.TestCase):
             {"turnId": "voice_turn_0001"},
         )])
 
+    def test_voice_command_capture_uses_quiet_aec_levels_and_stops_at_silence(self):
+        silence = array.array("h", [0] * live.AUDIO_SAMPLES).tobytes()
+        speech = array.array("h", [5] * live.AUDIO_SAMPLES).tobytes()
+        capture = live.VoiceCommandCapture(
+            "voice_turn_0002",
+            [silence] * live.WAKE_PREROLL_FRAMES,
+            ambient_rms=0.5,
+            now=100.0,
+        )
+
+        self.assertTrue(capture.ready)
+        self.assertFalse(capture.add(speech, now=100.2))
+        self.assertFalse(capture.add(silence, now=100.9))
+        self.assertTrue(capture.add(silence, now=101.0))
+        pcm16 = capture.finish()
+
+        self.assertGreater(len(pcm16), 16_000)
+
+    def test_submits_voice_audio_only_to_the_current_authenticated_live_session(self):
+        class Response:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"status": "accepted"}
+
+        class Client:
+            def __init__(self):
+                self.calls = []
+
+            async def post(self, path, json, timeout):
+                self.calls.append((path, json, timeout))
+                return Response()
+
+        client = Client()
+        status = asyncio.run(live._submit_voice_command_audio(
+            client,
+            {"device_id": "dev_1"},
+            "live_1",
+            "voice_turn_0003",
+            bytes(16_000),
+        ))
+
+        self.assertEqual(status, "accepted")
+        self.assertEqual(
+            client.calls[0][0],
+            "/api/device/dev_1/chatgpt/realtime/app-server/live_1/voice-command",
+        )
+        self.assertEqual(client.calls[0][1]["turnId"], "voice_turn_0003")
+        self.assertEqual(client.calls[0][2], 20.0)
+
     def test_reconnects_in_process_and_applies_a_new_browser_voice(self):
         voices = []
         statuses = []
@@ -355,6 +408,12 @@ class DevKitProtocolTests(unittest.TestCase):
             "properties": {
                 "application.name": "OpenHome Spotify",
                 "application.id": "com.openhome.spotify",
+                "application.process.binary": "chromium",
+            },
+        }))
+        self.assertFalse(live._is_default_agent_audio_stream({
+            "properties": {
+                "application.name": "OpenHome Spotify",
                 "application.process.binary": "chromium",
             },
         }))
@@ -519,7 +578,7 @@ class DevKitProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(deadline, 31.8)
 
     def test_wake_decoder_segments_long_silence(self):
-        quiet = array.array("h", [2] * live.AUDIO_SAMPLES).tobytes()
+        quiet = array.array("h", [0] * live.AUDIO_SAMPLES).tobytes()
         frames = 0
         for _ in range(live.WAKE_SILENCE_FRAMES - 1):
             frames, should_reset = live._advance_wake_silence(frames, quiet)
@@ -542,10 +601,10 @@ class DevKitProtocolTests(unittest.TestCase):
             "idle_seconds": 30,
         }
         self.assertFalse(
-            live._should_recycle_unresponsive_session(wake, now=129.9)
+            live._should_recycle_unresponsive_session(wake, now=111.9)
         )
         self.assertTrue(
-            live._should_recycle_unresponsive_session(wake, now=130.0)
+            live._should_recycle_unresponsive_session(wake, now=112.0)
         )
 
         wake["assistant_response_seen"] = True

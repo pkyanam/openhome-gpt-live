@@ -13,7 +13,7 @@ import {
 import type { PairingCodeStore } from "./pairing-code-store.ts";
 
 const PAIRING_COOKIE = "ohgpt_pairing";
-const MAX_JSON_BODY_BYTES = 512 * 1024;
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const CLAIM_LIMIT = 20;
 const CLAIM_WINDOW_MS = 60_000;
 const BRIDGE_KEEPALIVE_MS = 5_000;
@@ -538,6 +538,7 @@ function isAllowedDeviceRoute(path: string, method: string): boolean {
   if (/^\/realtime\/app-server\/[^/]+\/events$/.test(path)) return method === "GET";
   if (/^\/realtime\/app-server\/[^/]+\/clock$/.test(path)) return method === "POST";
   if (/^\/realtime\/app-server\/[^/]+\/turn$/.test(path)) return method === "POST";
+  if (/^\/realtime\/app-server\/[^/]+\/voice-command$/.test(path)) return method === "POST";
   if (/^\/realtime\/app-server\/[^/]+$/.test(path)) return method === "DELETE";
   return false;
 }

@@ -365,6 +365,84 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(requests).toEqual([]);
   });
 
+  test("uses music as the completion signal instead of repeating playback success", async () => {
+    const speech: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: () => "spotify",
+      spotifyAcknowledgement: "Got it. Starting Spotify.",
+      executeSpotify: async () => ({
+        speech: "Get Lucky by Daft Punk is playing.",
+        speakCompletion: false,
+      }),
+    });
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, []);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play Get Lucky by Daft Punk." },
+    });
+    await settle();
+
+    expect(speech).toEqual(["Got it. Starting Spotify."]);
+  });
+
+  test("claims a locally transcribed Spotify turn and interrupts the native duplicate", async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const executed: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: (transcript) => transcript.includes("Spotify") ? "spotify" : "codex",
+      executeSpotify: async (transcript) => {
+        executed.push(transcript);
+        return "Playback started.";
+      },
+    });
+    (session as any).speak = async () => {};
+    mockStartedSession(session, requests);
+    (session as any).startOptions.wakePhrase = "lara";
+    (session as any).handleNotification("turn/started", {
+      threadId: "realtime_thread",
+      turn: { id: "native_turn_1" },
+    });
+
+    await expect(session.submitExternalVoiceCommand(
+      "voice_turn_0004",
+      "Lara, play Dreams on Spotify.",
+    )).resolves.toBe("accepted");
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Play Dreams on Spotify." },
+    });
+    await settle();
+
+    expect(requests[0]).toEqual({
+      method: "turn/interrupt",
+      params: { threadId: "realtime_thread", turnId: "native_turn_1" },
+    });
+    expect(executed).toEqual(["play Dreams on Spotify."]);
+  });
+
+  test("ignores local transcripts outside the Spotify lane", async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: () => "codex",
+    });
+    mockStartedSession(session, requests);
+
+    await expect(session.submitExternalVoiceCommand(
+      "voice_turn_0005",
+      "Explain photosynthesis.",
+    )).resolves.toBe("ignored");
+    expect(requests).toEqual([]);
+  });
+
   test("allows exactly one backend route for each physical wake transaction", async () => {
     const events: RealtimeBridgeEvent[] = [];
     const searched: string[] = [];

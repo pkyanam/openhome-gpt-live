@@ -16,6 +16,7 @@ import { classifyCodexTask, isMediaControlRequest } from "./handoff-routing.ts";
 import { routeVoiceRequest } from "./voice-routing.ts";
 import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
 import { OpenHomeSpotifyClient } from "./openhome-spotify-client.ts";
+import { LocalWhisperTranscriber } from "./local-transcriber.ts";
 
 const LIVE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const host = process.env.HOST?.trim() || "127.0.0.1";
@@ -53,6 +54,11 @@ const spotify = new OpenHomeSpotifyClient({
   baseUrl: process.env.OPENHOME_SPOTIFY_URL,
   token: process.env.OPENHOME_SPOTIFY_TOOL_TOKEN,
 });
+const voiceCommandTranscriber = new LocalWhisperTranscriber({
+  enabled: process.env.OPENHOME_LOCAL_VOICE_COMMANDS?.trim().toLowerCase() !== "false",
+  executable: process.env.OPENHOME_WHISPER_EXECUTABLE,
+  modelPath: process.env.OPENHOME_WHISPER_MODEL,
+});
 
 if (!lwcSecret || lwcSecret.length < 32) {
   throw new Error("LWC_SECRET must contain at least 32 characters.");
@@ -80,6 +86,7 @@ auth = createChatGPTHandler({
   enableResponsesProxy: true,
   enableRealtime: true,
   realtime: {
+    maxRequestBytes: 1024 * 1024,
     appServer: {
       // Keep one conversation alive through ordinary room-idle periods. The
       // DevKit reconnects when Live itself closes; a second 30-minute timer on
@@ -113,9 +120,17 @@ auth = createChatGPTHandler({
       executeSearch: ({ request, transcript }) => executeSubscriptionSearch(request, transcript),
       ...(spotify.configured
         ? {
-            spotifyAcknowledgement: "Starting that on Spotify now.",
+            spotifyAcknowledgement,
             executeSpotify: ({ transcript, requestId }: { transcript: string; requestId: string }) =>
               spotify.executeVoice(transcript, requestId),
+            ...(voiceCommandTranscriber.configured
+              ? {
+                  transcribeVoiceCommand: ({ pcm16, sampleRate }: {
+                    pcm16: Uint8Array;
+                    sampleRate: 16_000;
+                  }) => voiceCommandTranscriber.transcribePcm16(pcm16, sampleRate),
+                }
+              : {}),
           }
         : {}),
       routeHandoff: (transcript) => {
@@ -204,7 +219,7 @@ const server = Bun.serve({
     "/": app,
     "/setup": app,
     "/healthz": () => Response.json(
-      { status: "ok", service: "openhome-gpt-live", version: "0.3.10" },
+      { status: "ok", service: "openhome-gpt-live", version: "0.3.11" },
       { headers: { "cache-control": "no-store" } },
     ),
     "/api/chatgpt/*": (request) => auth.handler(request),
@@ -217,12 +232,27 @@ console.log(`OpenHome GPT Live listening on ${server.url}`);
 console.log(`Codex workspace: ${codexWorkspace}`);
 console.log(`Codex access mode: ${fullCodexAccess ? "full" : confirmedMacControl ? "confirmed" : "workspace"}`);
 console.log(`Persistent state directory: ${dataDirectory}`);
+console.log(`Local Spotify voice fast lane: ${voiceCommandTranscriber.configured ? "ready" : "disabled"}`);
 if (!process.env.OPENHOME_API_KEY) {
   console.warn("OPENHOME_API_KEY is not set; voice works, but OpenHome tools will return a configuration error.");
 }
 
 function splitCsv(value: string | undefined): string[] {
   return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
+}
+
+function spotifyAcknowledgement(transcript: string): string | undefined {
+  const text = transcript.toLowerCase();
+  if (/\b(?:what(?:'s| is) playing|now playing|spotify status|search|find)\b/.test(text)) {
+    return undefined;
+  }
+  if (/\b(?:pause|stop)\b/.test(text)) return "Pausing Spotify.";
+  if (/\b(?:resume|continue|unpause)\b/.test(text)) return "Resuming Spotify.";
+  if (/\b(?:next|skip)\b/.test(text)) return "Skipping that on Spotify.";
+  if (/\b(?:previous|go back)\b/.test(text)) return "Going back on Spotify.";
+  if (/\b(?:queue|add)\b/.test(text)) return "Adding that to your Spotify queue.";
+  if (/\b(?:volume|mute|silence)\b/.test(text)) return "Updating Spotify volume.";
+  return "Got it. Starting Spotify.";
 }
 
 function parsePort(value: string | undefined): number {

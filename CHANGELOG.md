@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.11 - 2026-08-10
+
+- Add a local Whisper fast lane that claims routine Spotify requests before
+  native GPT Live can duplicate them through Codex or desktop control.
+- Preserve one backend owner per physical wake transaction while leaving
+  ordinary conversation and OpenAI web search in their existing lanes.
+- Improve first-attempt recognition for quiet custom wake names and finish
+  local media capture sooner after the user stops speaking.
+- Exempt the marked OpenHome Spotify audio stream from the firmware-agent mute
+  guard, including a defensive application-name fallback.
+- Use one concise acknowledgement for Spotify mutations; verified speaker
+  audio is the success signal instead of a second spoken confirmation.
+- Keep status and search results spoken, retain request idempotency, and add
+  regression coverage for local transcription and Spotify routing.
+
 ## 0.3.10 - 2026-08-09
 
 - Tighten one-word custom wake names to a substantially stricter PocketSphinx
