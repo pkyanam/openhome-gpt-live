@@ -542,10 +542,10 @@ class DevKitProtocolTests(unittest.TestCase):
             "idle_seconds": 30,
         }
         self.assertFalse(
-            live._should_recycle_unresponsive_session(wake, now=114.9)
+            live._should_recycle_unresponsive_session(wake, now=129.9)
         )
         self.assertTrue(
-            live._should_recycle_unresponsive_session(wake, now=115.0)
+            live._should_recycle_unresponsive_session(wake, now=130.0)
         )
 
         wake["assistant_response_seen"] = True

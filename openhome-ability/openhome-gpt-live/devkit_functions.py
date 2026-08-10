@@ -84,7 +84,10 @@ PLAYBACK_JITTER_BUFFER_FRAMES = 8
 PLAYBACK_FRAME_GAP_WARNING_SECONDS = 0.08
 REQUEST_SPEECH_RMS = 40.0
 REQUEST_END_SILENCE_SECONDS = 0.8
-REQUEST_RESPONSE_TIMEOUT_SECONDS = 15.0
+# `/wm` can take longer to emit a client-managed tool handoff than it takes to
+# answer an ordinary knowledge question. Give music/search/tool turns the full
+# configured active window before declaring the otherwise-open transport stale.
+REQUEST_RESPONSE_TIMEOUT_SECONDS = 30.0
 GPT_LIVE_READY_STATES = {"idle", "connected", "listening", "listening_intently"}
 DEFAULT_AGENT_GUARD_INTERVAL_SECONDS = 1.0
 
