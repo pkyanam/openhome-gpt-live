@@ -8,6 +8,15 @@ describe("OpenHomeSpotifyClient", () => {
       baseUrl: "http://speaker.example:3199",
       token: "test-token",
     })).toThrow("HTTPS");
+    expect(() => new OpenHomeSpotifyClient({
+      baseUrl: "http://192.168.1.60:3199",
+      token: "test-token",
+    })).toThrow("private LAN");
+    expect(new OpenHomeSpotifyClient({
+      baseUrl: "http://192.168.1.60:3199",
+      token: "test-token",
+      allowPrivateHttp: true,
+    }).configured).toBe(true);
     expect(new OpenHomeSpotifyClient().configured).toBe(false);
   });
 
@@ -68,5 +77,24 @@ describe("OpenHomeSpotifyClient", () => {
     });
     await expect(client.executeVoice("next", "spotify-request-2")).rejects.toThrow("connection reset");
     expect(calls).toBe(1);
+  });
+
+  test("accepts a terminal response directly from a standalone DevKit", async () => {
+    const client = new OpenHomeSpotifyClient({
+      baseUrl: "http://192.168.1.60:3199",
+      token: "tool-token",
+      allowPrivateHttp: true,
+      fetch: async () => Response.json({
+        requestId: "spotify-request-3",
+        tool: "spotify.play",
+        speech: "Playing Get Lucky by Daft Punk.",
+        mutated: true,
+      }),
+    });
+    await expect(client.executeVoice("play Get Lucky by Daft Punk", "spotify-request-3")).resolves.toEqual({
+      speech: "Playing Get Lucky by Daft Punk.",
+      speakCompletion: false,
+      tool: "spotify.play",
+    });
   });
 });

@@ -10,6 +10,10 @@ skip_finish=0
 non_interactive="${OPENHOME_GPT_LIVE_NONINTERACTIVE:-0}"
 stage="starting"
 setup_args=()
+with_spotify=0
+spotify_install_dir="${OPENHOME_SPOTIFY_INSTALL_DIR:-${HOME}/.openhome-spotify}"
+spotify_ref="${OPENHOME_SPOTIFY_REF:-feature/standalone-speaker}"
+spotify_args=()
 
 say() { printf '%s\n' "$*"; }
 fail() { say "Error: $*" >&2; exit 1; }
@@ -48,6 +52,16 @@ Installer options:
   -h, --help              Show this help
 
 Optional components:
+  --with-spotify          Also install the separate speaker-native Spotify stack
+  --spotify-install-dir PATH
+                          Spotify checkout (default: ~/.openhome-spotify)
+  --spotify-client-id ID Spotify developer app Client ID
+  --spotify-public-url URL
+                          Spotify OAuth/setup origin; may differ from GPT Live
+  --spotify-tunnel MODE  quick, existing, or later
+  --spotify-player-name NAME
+                          Spotify Connect name (default: OpenHome Spotify)
+
   Codex enables local files/projects/computer actions but is not required for
   GPT Live conversation or OpenAI web search. An OpenHome API key enables
   automatic Ability upload and account tools but is not required. Secrets are
@@ -65,6 +79,17 @@ while [ "$#" -gt 0 ]; do
     --skip-checks) skip_checks=1; shift ;;
     --skip-service) skip_service=1; shift ;;
     --skip-finish) skip_finish=1; shift ;;
+    --with-spotify) with_spotify=1; shift ;;
+    --spotify-install-dir) [ "$#" -ge 2 ] || fail "$1 requires a value"; spotify_install_dir="$2"; shift 2 ;;
+    --spotify-install-dir=*) spotify_install_dir="${1#*=}"; shift ;;
+    --spotify-client-id) [ "$#" -ge 2 ] || fail "$1 requires a value"; spotify_args+=("--client-id" "$2"); shift 2 ;;
+    --spotify-client-id=*) spotify_args+=("$1"); shift ;;
+    --spotify-public-url) [ "$#" -ge 2 ] || fail "$1 requires a value"; spotify_args+=("--public-url" "$2"); shift 2 ;;
+    --spotify-public-url=*) spotify_args+=("--public-url=${1#*=}"); shift ;;
+    --spotify-tunnel) [ "$#" -ge 2 ] || fail "$1 requires a value"; spotify_args+=("--tunnel" "$2"); shift 2 ;;
+    --spotify-tunnel=*) spotify_args+=("--tunnel=${1#*=}"); shift ;;
+    --spotify-player-name) [ "$#" -ge 2 ] || fail "$1 requires a value"; spotify_args+=("--player-name" "$2"); shift 2 ;;
+    --spotify-player-name=*) spotify_args+=("--player-name=${1#*=}"); shift ;;
     --non-interactive) non_interactive=1; setup_args+=("--non-interactive"); shift ;;
     --tunnel|--public-url|--hostname|--tunnel-name|--email|--wake-name|--workspace|--access)
       [ "$#" -ge 2 ] || fail "$1 requires a value"
@@ -206,6 +231,16 @@ fi
 
 say ""
 say "Host installation complete. Re-run this installer any time to update or resume."
+if [ "$with_spotify" = "1" ]; then
+  stage="installing OpenHome Spotify"
+  say ""
+  say "Installing the separate Spotify stack…"
+  spotify_installer_url="https://raw.githubusercontent.com/pkyanam/openhome-spotify/${spotify_ref}/install.sh"
+  spotify_command=(bash -s -- --install-dir "$spotify_install_dir" --ref "$spotify_ref")
+  if [ "$non_interactive" = "1" ]; then spotify_command+=("--non-interactive"); fi
+  curl -fsSL "$spotify_installer_url" | "${spotify_command[@]}" "${spotify_args[@]}"
+  say "Spotify setup is isolated at $spotify_install_dir. Its browser page will offer the one-time Move Spotify to the speaker handoff after authorization."
+fi
 if [ "$bridge_ready" = "1" ] && [ "$skip_finish" != "1" ] && [ "$non_interactive" != "1" ]; then
   stage="waiting for the OpenHome handoff"
   bun run finish </dev/tty
