@@ -13,7 +13,8 @@ ChatGPT, OpenHome, tunnel, or DevKit credentials.
 
 ## Trust boundaries
 
-- ChatGPT access/refresh material and the OpenHome API key stay on the host.
+- ChatGPT access/refresh material, the OpenHome API key, and the optional
+  AgentMail API key stay on the host.
 - The DevKit stores only an opaque per-device credential in its mode-0600
   worker state. The enrollment token is not copied into that worker config.
 - The browser profile used for `/setup` stores a distinct HttpOnly pairing
@@ -26,6 +27,9 @@ ChatGPT, OpenHome, tunnel, or DevKit credentials.
 - Tool names and JSON schemas are defined by the server. Model, browser, and
   device inputs are revalidated at the execution boundary.
 - Public deployments are bound to one configured ChatGPT email.
+- AgentMail setup selects one exact sender inbox and supports inbox-scoped keys.
+  Runtime exposes only one-recipient plain-text sends, revalidates structured
+  model output, and supplies a provider idempotency key for every message.
 - Consequential OpenHome mutations and confirmed host-computer tasks require an
   authenticated `/setup` approval. Spoken “yes” is not approval.
 
@@ -34,6 +38,12 @@ ChatGPT, OpenHome, tunnel, or DevKit credentials.
 Use a trusted HTTPS endpoint, keep Bun bound to loopback, protect `.env` and
 `data/`, and apply project updates. Back up `.env` and `data/` together;
 rotating `LWC_SECRET` invalidates encrypted session state.
+
+Use least privilege for AgentMail: scope the key to the selected inbox when
+possible and grant `message_send`. Setup and diagnostics validate that scope
+through AgentMail's authenticated identity endpoint. A broader organization- or
+pod-scoped key also needs `inbox_read` so the selected address can be verified.
+Never put the key in shell history or a command-line flag.
 
 For a locally managed Cloudflare Tunnel, protect `~/.cloudflared/cert.pem` as
 an account-wide management credential and the tunnel's UUID JSON file as its

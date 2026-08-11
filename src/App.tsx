@@ -90,6 +90,15 @@ export function App() {
       case "handoff":
         addActivity(event.transcript ? `Codex handoff: ${event.transcript}` : "Codex handoff started.");
         break;
+      case "agentmail.started":
+        addActivity("AgentMail send started.");
+        break;
+      case "agentmail.completed":
+        addActivity(
+          event.status === "completed" ? "AgentMail send completed." : "AgentMail send failed.",
+          event.status === "completed" ? "good" : "warn",
+        );
+        break;
       case "tool.running":
         addActivity(`Running ${event.name}…`);
         break;

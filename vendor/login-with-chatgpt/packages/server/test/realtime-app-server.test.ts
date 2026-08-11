@@ -365,6 +365,83 @@ describe("ChatGPTRealtimeAppServerSession", () => {
     expect(requests).toEqual([]);
   });
 
+  test("routes AgentMail sends without starting Codex and deduplicates retries", async () => {
+    const events: RealtimeBridgeEvent[] = [];
+    const speech: string[] = [];
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const executed: Array<{ transcript: string; requestId: string; speechCount: number }> = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: () => "agentmail",
+      agentMailAcknowledgement: "I’m drafting and sending that email now.",
+      executeAgentMail: async (transcript, requestId) => {
+        executed.push({ transcript, requestId, speechCount: speech.length });
+        return "Email sent to adi@agentmail.cc.";
+      },
+      now: () => 1_000,
+    });
+    session.onEvent((event) => events.push(event));
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, requests);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Send an email to adi@agentmail.cc to say I love AgentMail.",
+      },
+    });
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: {
+        type: "handoff_request",
+        input_transcript: "Send an email to adi@agentmail.cc to say I love AgentMail.",
+      },
+    });
+    await settle();
+
+    const started = events.find((event) => event.type === "agentmail.started");
+    expect(started?.type).toBe("agentmail.started");
+    expect(executed).toEqual([{
+      transcript: "Send an email to adi@agentmail.cc to say I love AgentMail.",
+      requestId: started?.type === "agentmail.started" ? started.taskId : "",
+      speechCount: 1,
+    }]);
+    expect(speech).toEqual([
+      "I’m drafting and sending that email now.",
+      "Email sent to adi@agentmail.cc.",
+    ]);
+    expect(events.some((event) => event.type === "agentmail.completed" && event.status === "completed"))
+      .toBe(true);
+    expect(events.filter((event) => event.type === "handoff.deduplicated")).toHaveLength(1);
+    expect(requests).toEqual([]);
+  });
+
+  test("does not encourage a retry when an AgentMail send is ambiguous", async () => {
+    const speech: string[] = [];
+    const session = new ChatGPTRealtimeAppServerSession({
+      tokens: { accessToken: "access", accountId: "acct_123" },
+      tools: [],
+      executeTool: async () => ({ output: {} }),
+      routeHandoff: () => "agentmail",
+      executeAgentMail: async () => {
+        throw new Error("provider timeout");
+      },
+    });
+    (session as any).speak = async (text: string) => speech.push(text);
+    mockStartedSession(session, []);
+
+    (session as any).handleNotification("thread/realtime/itemAdded", {
+      item: { type: "handoff_request", input_transcript: "Send an email to adi@agentmail.cc." },
+    });
+    await settle();
+
+    expect(speech).toEqual([
+      "I’m drafting and sending that email now.",
+      "I couldn’t confirm that email send. Please check AgentMail before trying again.",
+    ]);
+  });
+
   test("uses music as the completion signal instead of repeating playback success", async () => {
     const speech: string[] = [];
     const session = new ChatGPTRealtimeAppServerSession({

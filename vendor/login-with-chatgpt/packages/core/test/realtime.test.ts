@@ -266,6 +266,11 @@ describe("ChatGPT Realtime", () => {
       status: "completed",
     })).toMatchObject({ type: "search.completed", status: "completed" });
     expect(parseChatGPTRealtimeAppServerEvent({
+      type: "agentmail.started",
+      taskId: "email-1",
+      transcript: "send an email",
+    })).toMatchObject({ type: "agentmail.started", taskId: "email-1" });
+    expect(parseChatGPTRealtimeAppServerEvent({
       type: "handoff.completed",
       taskId: "task-1",
       transcript: "play a song",

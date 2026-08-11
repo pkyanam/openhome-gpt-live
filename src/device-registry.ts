@@ -45,7 +45,7 @@ export interface DeviceRecord {
   codexQueueDepth?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
-  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "codex";
+  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "agentmail" | "codex";
   lastVoiceRouteAt?: number;
   pendingConfirmations: PendingDeviceConfirmation[];
   lastError?: string;
@@ -77,7 +77,7 @@ export interface PublicDeviceSession {
   codexActiveTasks?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
-  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "codex";
+  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "agentmail" | "codex";
   lastVoiceRouteAt?: number;
   pendingConfirmations: PendingDeviceConfirmation[];
   lastError?: string;
@@ -255,6 +255,10 @@ export class DeviceRegistry {
           break;
         case "spotify.started":
           record.lastVoiceRoute = "spotify";
+          record.lastVoiceRouteAt = this.now();
+          break;
+        case "agentmail.started":
+          record.lastVoiceRoute = "agentmail";
           record.lastVoiceRouteAt = this.now();
           break;
         case "handoff.completed": {

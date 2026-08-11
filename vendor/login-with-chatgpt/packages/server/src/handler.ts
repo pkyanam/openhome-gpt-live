@@ -30,6 +30,7 @@ import {
 import { readTextBody } from "./request-body.ts";
 
 export type {
+  RealtimeAppServerAgentMailContext,
   RealtimeAppServerConfirmationContext,
   RealtimeAppServerPolicy,
   RealtimeAppServerSearchContext,

@@ -87,6 +87,7 @@ try {
 
   await mkdir(workspace, { recursive: true });
   const values: EnvValues = {
+    ...existing,
     LWC_SECRET: configured("LWC_SECRET") || randomBytes(32).toString("hex"),
     DEVKIT_BOOTSTRAP_TOKEN: configured("DEVKIT_BOOTSTRAP_TOKEN") || randomBytes(32).toString("hex"),
     PUBLIC_BASE_URL: publicBaseUrl,

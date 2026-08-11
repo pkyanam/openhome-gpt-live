@@ -137,6 +137,27 @@ property `application.id=com.openhome.spotify`. Unmarked Chromium remains under
 the existing mute watchdog. Use the sister project's audio diagnostics to
 confirm the marker instead of disabling the guard globally.
 
+## An email command starts Codex or AgentMail is unavailable
+
+The AgentMail lane is optional and requires both `AGENTMAIL_API_KEY` and
+`AGENTMAIL_INBOX`. Run `bun run agentmail:setup`; it hides the key, validates
+the exact selected inbox without enumerating the account, and preserves every
+other `.env` value. Prefer an inbox-scoped key with `message_send`; broader keys
+also need `inbox_read` for exact-address validation. If setup reports a 403,
+the key is either missing that read permission or scoped to a different inbox.
+Then restart the GPT Live host service.
+
+An explicit request such as “Lara, send an email to person@example.com saying
+thank you” should show **Last routed request: AgentMail** on `/setup` while
+Codex remains idle. Draft-only requests, inbox reading, replies, attachments,
+multiple recipients, or an explicitly named Gmail/Outlook/Mac app are not part
+of this first AgentMail lane.
+
+If GPT Live says it could not confirm a send, inspect AgentMail before repeating
+the command. The provider idempotency key protects a normalized retry for 24
+hours, but checking first avoids turning a differently worded retry into a
+second logical message.
+
 ## The first wake request is silent but repeating it works
 
 Upgrade the Ability to **0.3.9 or newer**. Version 0.3.8 shortened the retained

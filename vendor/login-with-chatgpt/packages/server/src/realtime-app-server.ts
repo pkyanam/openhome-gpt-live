@@ -56,6 +56,13 @@ export type RealtimeBridgeEvent =
     transcript: string;
     status: "completed" | "failed";
   }
+  | { type: "agentmail.started"; taskId: string; transcript: string }
+  | {
+    type: "agentmail.completed";
+    taskId: string;
+    transcript: string;
+    status: "completed" | "failed";
+  }
   | {
     type: "handoff.completed";
     taskId: string;
@@ -71,7 +78,7 @@ export type RealtimeBridgeEvent =
   | { type: "error"; message: string };
 
 export type ExternalVoiceCommandDisposition = "accepted" | "ignored" | "deduplicated";
-type RealtimeHandoffDestination = "codex" | "native" | "openai_search" | "spotify";
+type RealtimeHandoffDestination = "codex" | "native" | "openai_search" | "spotify" | "agentmail";
 
 export interface RealtimeSpotifyResult {
   speech: string;
@@ -108,10 +115,14 @@ export interface ChatGPTRealtimeAppServerOptions {
   ) => Promise<string | RealtimeSpotifyResult>;
   /** Spoken before the Spotify Ability begins resolving or mutating playback. */
   spotifyAcknowledgement?: string | ((transcript: string) => string | undefined);
+  /** Drafts and sends one outbound message through the host-owned AgentMail integration. */
+  executeAgentMail?: (transcript: string, requestId: string) => Promise<string>;
+  /** Spoken before AgentMail drafting and sending begins. */
+  agentMailAcknowledgement?: string | ((transcript: string) => string | undefined);
   /**
    * Routes an incoming native handoff. Returning `native` retries the request
-   * in GPT Live; `openai_search` and `spotify` run their deterministic service
-   * lanes independently. Codex requests start in isolated execution threads.
+   * in GPT Live; `openai_search`, `spotify`, and `agentmail` run deterministic
+   * host-owned lanes independently. Codex requests start in isolated execution threads.
    */
   routeHandoff?: (transcript: string) => RealtimeHandoffDestination;
   /** Classifies an accepted Codex handoff for its execution contract and safety limits. */
@@ -182,6 +193,12 @@ interface SpotifyHandoff {
   normalizedTranscript: string;
 }
 
+interface AgentMailHandoff {
+  id: string;
+  transcript: string;
+  normalizedTranscript: string;
+}
+
 const SPEAK_TOOL = "speak_to_user";
 const MAX_PARALLEL_HANDOFFS = 4;
 const HANDOFF_DEDUPE_MS = 30_000;
@@ -242,6 +259,8 @@ export class ChatGPTRealtimeAppServerSession {
   private activeSearches = new Map<string, SearchHandoff>();
   private recentSpotifyRequests = new Map<string, number>();
   private activeSpotifyRequests = new Map<string, SpotifyHandoff>();
+  private recentAgentMailRequests = new Map<string, number>();
+  private activeAgentMailRequests = new Map<string, AgentMailHandoff>();
   private lastNativeRedirectAt?: number;
   private lastMediaHandoffAt?: number;
   private currentVoiceTurnId?: string;
@@ -763,6 +782,9 @@ export class ChatGPTRealtimeAppServerSession {
     for (const [key, seenAt] of this.recentSpotifyRequests) {
       if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentSpotifyRequests.delete(key);
     }
+    for (const [key, seenAt] of this.recentAgentMailRequests) {
+      if (now - seenAt >= HANDOFF_DEDUPE_MS) this.recentAgentMailRequests.delete(key);
+    }
     if (destination === "native") {
       const redirectKey = nativeRedirectKey(transcript);
       if (
@@ -831,6 +853,30 @@ export class ChatGPTRealtimeAppServerSession {
       this.activeSpotifyRequests.set(normalizedTranscript, spotify);
       this.emit({ type: "spotify.started", taskId: spotify.id, transcript });
       void this.runSpotify(spotify);
+      return;
+    }
+    if (destination === "agentmail") {
+      if (!this.options.executeAgentMail) {
+        void this.speak("AgentMail is not configured for this speaker.").catch(() => {});
+        this.emit({ type: "error", message: "AgentMail is not configured." });
+        return;
+      }
+      if (
+        this.activeAgentMailRequests.has(normalizedTranscript)
+        || this.recentAgentMailRequests.has(normalizedTranscript)
+      ) {
+        this.emit({ type: "handoff.deduplicated", transcript });
+        return;
+      }
+      this.recentAgentMailRequests.set(normalizedTranscript, now);
+      const agentMail: AgentMailHandoff = {
+        id: crypto.randomUUID(),
+        transcript,
+        normalizedTranscript,
+      };
+      this.activeAgentMailRequests.set(normalizedTranscript, agentMail);
+      this.emit({ type: "agentmail.started", taskId: agentMail.id, transcript });
+      void this.runAgentMail(agentMail);
       return;
     }
     const kind = this.options.classifyHandoff?.(transcript) ?? delegatedTaskKind(transcript);
@@ -960,6 +1006,33 @@ export class ChatGPTRealtimeAppServerSession {
         type: "spotify.completed",
         taskId: spotify.id,
         transcript: spotify.transcript,
+        status,
+      });
+    }
+  }
+
+  private async runAgentMail(agentMail: AgentMailHandoff): Promise<void> {
+    let status: "completed" | "failed" = "completed";
+    try {
+      const configured = this.options.agentMailAcknowledgement;
+      const acknowledgement = typeof configured === "function"
+        ? configured(agentMail.transcript)
+        : configured ?? "I’m drafting and sending that email now.";
+      if (acknowledgement?.trim()) await this.speak(acknowledgement);
+      const result = await this.options.executeAgentMail!(agentMail.transcript, agentMail.id);
+      if (!result.trim()) throw new Error("AgentMail returned no result.");
+      await this.speak(result);
+    } catch {
+      status = "failed";
+      await this.speak(
+        "I couldn’t confirm that email send. Please check AgentMail before trying again.",
+      ).catch(() => {});
+    } finally {
+      this.activeAgentMailRequests.delete(agentMail.normalizedTranscript);
+      this.emit({
+        type: "agentmail.completed",
+        taskId: agentMail.id,
+        transcript: agentMail.transcript,
         status,
       });
     }

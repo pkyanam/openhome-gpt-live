@@ -14,6 +14,7 @@ ChatGPT GPT Live
 Login with ChatGPT app-server bridge on the owner's computer
           ├── ordinary conversation ───────────────► GPT Live
           ├── current information ─────────────────► OpenAI web_search
+          ├── one-recipient email ─────────────────► OpenAI draft + AgentMail
           └── files / apps / actions ──────────────► Codex
                                                         │
                                                         ▼
@@ -63,8 +64,8 @@ sends the native stop-speaking action.
 
 The Bun bridge must remain running. It stores encrypted Login with ChatGPT
 sessions, hashed device credentials, and browser-pairing state under `data/`.
-ChatGPT bearer/refresh material and the OpenHome API key never go to the DevKit
-or browser.
+ChatGPT bearer/refresh material, the OpenHome API key, and the AgentMail API key
+never go to the DevKit or browser.
 
 The DevKit sends an SDP offer to the authenticated app-server Realtime route.
 The vendored SDK starts an isolated Codex app-server process with the signed-in
@@ -93,6 +94,12 @@ The host classifies every native handoff before Codex accepts it:
 - When the independent `openhome-spotify` service is configured, its supported
   routine music and podcast commands enter a deterministic Spotify lane. The
   Ability owns OAuth, resolution, idempotency, and single-flight playback.
+- When `AGENTMAIL_API_KEY` and `AGENTMAIL_INBOX` are configured together,
+  explicit one-recipient email sends enter a host-owned AgentMail lane. The
+  authenticated Responses endpoint converts the exact current voice request
+  into a strict subject and plain-text body. The host revalidates every field
+  and sends through the selected inbox with a deterministic AgentMail
+  `Idempotency-Key`; the key and inbox selection stay on the host.
 - Other media-app commands enter the Codex single-flight media lane before
   native or search fallback. Without Spotify configuration, routing is
   unchanged from the standalone GPT Live release.
@@ -110,9 +117,13 @@ drained into the same bounded delay queue, preventing pipe backpressure from
 discarding the rest of the prompt. Armed room audio is still replaced with
 silence and never leaves the speaker.
 
-The bridge uses client-managed handoffs, so web search does not create a Codex
-turn. The search lane acknowledges immediately, runs independently, and sends
-its speech-friendly result through `thread/realtime/appendSpeech`.
+The bridge uses client-managed handoffs, so web search and AgentMail do not
+create Codex turns. Each lane acknowledges immediately, runs independently,
+and sends its speech-friendly result through `thread/realtime/appendSpeech`.
+AgentMail keeps active and recent request guards in the Live session, while its
+provider key is derived from the selected sender and normalized voice request.
+An ambiguous failure tells the owner to check AgentMail instead of encouraging
+an unsafe blind retry.
 
 Each Codex request gets a new ephemeral app-server thread and may run in
 parallel, with a four-task safety limit. Acceptance and its spoken acknowledgement

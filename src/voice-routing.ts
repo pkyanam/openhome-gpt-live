@@ -1,6 +1,6 @@
 import { routeRealtimeHandoff } from "./handoff-routing.ts";
 
-export type VoiceDestination = "native" | "openai_search" | "spotify" | "codex";
+export type VoiceDestination = "native" | "openai_search" | "spotify" | "agentmail" | "codex";
 
 const CLOCK_ONLY = [
   /\b(?:what(?:'s| is)|tell me)\s+(?:the\s+)?(?:exact\s+)?(?:date|day|time|timezone)\b/i,
@@ -21,14 +21,37 @@ const CURRENT_INFORMATION = [
 ];
 
 /** Local actions win; otherwise current-information requests use OpenAI search. */
-export function routeVoiceRequest(transcript: string, spotifyConfigured = false): VoiceDestination {
+export function routeVoiceRequest(
+  transcript: string,
+  spotifyConfigured = false,
+  agentMailConfigured = false,
+): VoiceDestination {
   if (spotifyConfigured && isSpotifyAbilityRequest(transcript)) return "spotify";
+  if (agentMailConfigured && isAgentMailSendRequest(transcript)) return "agentmail";
   if (routeRealtimeHandoff(transcript) === "codex") return "codex";
   if (CLOCK_ONLY.some((pattern) => pattern.test(transcript))) return "native";
   if ([...EXPLICIT_WEB, ...CURRENT_INFORMATION].some((pattern) => pattern.test(transcript))) {
     return "openai_search";
   }
   return "native";
+}
+
+/** One-recipient outbound email actions owned by the configured AgentMail inbox. */
+export function isAgentMailSendRequest(transcript: string): boolean {
+  const text = transcript
+    .replace(/^\s*[a-z][a-z0-9 -]{0,30}\s*[,;]\s*/i, "")
+    .replace(/^\s*(?:please\s+)?(?:can|could|would|will)\s+you\s+/i, "")
+    .replace(/^\s*(?:please\s+)?(?:i\s+(?:want|need)\s+(?:you\s+)?to|go\s+ahead\s+and)\s+/i, "")
+    .trim();
+  if (/\bcodex\b/i.test(text)) return false;
+  if (/\b(?:gmail|outlook|apple mail|mail app)\b/i.test(text)) return false;
+  if (/\b(?:do not|don't|never)\s+(?:send|email)\b/i.test(text)) return false;
+  if (/\b(?:how|why|what)\b[\s\S]{0,80}\b(?:send|email)\b/i.test(text)) return false;
+  const sendAction = /\bsend\b/i.test(text) || /^(?:please\s+)?email\b/i.test(text);
+  const emailTarget = /\b(?:email|message|note)\b/i.test(text)
+    || /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i.test(text)
+    || /\b\S+\s+at\s+\S+[\s\S]{0,40}\sdot\s+\S+\b/i.test(text);
+  return sendAction && emailTarget;
 }
 
 /** Routine, deterministic playback requests accepted by the sister Ability. */

@@ -28,7 +28,7 @@ interface PairedSession {
   codexActiveTasks?: number;
   lastCodexTaskStatus?: "completed" | "failed" | "interrupted";
   lastCodexTaskAt?: number;
-  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "codex";
+  lastVoiceRoute?: "native" | "openai_search" | "spotify" | "agentmail" | "codex";
   lastVoiceRouteAt?: number;
   pendingConfirmations: PendingConfirmation[];
   lastError?: string;
@@ -390,7 +390,9 @@ export function PairingApp() {
                         ? "OpenAI web search"
                         : session.lastVoiceRoute === "spotify"
                           ? "OpenHome Spotify"
-                        : "Codex"}</dd>
+                          : session.lastVoiceRoute === "agentmail"
+                            ? "AgentMail"
+                            : "Codex"}</dd>
                   </div>
                 )}
               </dl>
