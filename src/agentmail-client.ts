@@ -65,7 +65,21 @@ export class AgentMailClient {
       { headers: { authorization: `Bearer ${apiKey}`, accept: "application/json" } },
       "verify",
     );
-    if (!response.ok) throw agentMailHttpError(response.status, "verify");
+    if (!response.ok) {
+      if (response.status === 403) {
+        const scope = await this.credentialScope(apiKey);
+        if (scope.type === "inbox") {
+          if (scope.inboxId.toLowerCase() !== inbox.toLowerCase()) {
+            throw new Error("The AgentMail API key is scoped to a different inbox than the selected sender address.");
+          }
+          return { inboxId: scope.inboxId, email: inbox };
+        }
+        throw new Error(
+          `The ${scope.type}-scoped AgentMail API key needs inbox_read to validate the selected sender address.`,
+        );
+      }
+      throw agentMailHttpError(response.status, "verify");
+    }
     const payload = await safeJson(response);
     const email = readString(payload, "email");
     const inboxId = readString(payload, "inbox_id");
@@ -74,6 +88,25 @@ export class AgentMailClient {
     }
     const displayName = optionalString(payload, "display_name");
     return { inboxId, email, ...(displayName ? { displayName } : {}) };
+  }
+
+  private async credentialScope(apiKey: string): Promise<
+    | { type: "inbox"; inboxId: string }
+    | { type: "organization" | "pod" }
+  > {
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}/v0/auth/me`,
+      { headers: { authorization: `Bearer ${apiKey}`, accept: "application/json" } },
+      "verify",
+    );
+    if (!response.ok) throw agentMailHttpError(response.status, "verify");
+    const payload = await safeJson(response);
+    const scopeType = readString(payload, "scope_type");
+    if (scopeType === "inbox") {
+      return { type: scopeType, inboxId: readString(payload, "inbox_id") };
+    }
+    if (scopeType === "organization" || scopeType === "pod") return { type: scopeType };
+    throw new Error("AgentMail returned an invalid credential scope.");
   }
 
   async sendMessage(
@@ -178,7 +211,7 @@ function agentMailHttpError(status: number, operation: "verify" | "send"): Error
   if (status === 403) {
     return new Error(operation === "send"
       ? "AgentMail rejected the email. Check the API key's inbox scope, message_send permission, and recipient policy."
-      : "The AgentMail API key cannot read the selected inbox. Grant inbox_read or use a key scoped to that inbox.");
+      : "The AgentMail API key cannot validate the selected inbox. Grant inbox_read or use a message_send key scoped to that exact inbox.");
   }
   if (status === 404) return new Error("The selected AgentMail inbox was not found.");
   if (status === 409) return new Error("AgentMail rejected a conflicting duplicate-send key.");

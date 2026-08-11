@@ -33,6 +33,69 @@ describe("AgentMail client", () => {
     expect(requests[0]!.headers.get("authorization")).toBe("Bearer am_test_secret");
   });
 
+  test("accepts an exact inbox-scoped key without inbox_read", async () => {
+    const paths: string[] = [];
+    const client = new AgentMailClient({
+      apiKey: "am_scoped_secret",
+      inbox: "speaker@agentmail.to",
+      fetch: async (input) => {
+        const path = new URL(input.toString()).pathname;
+        paths.push(path);
+        if (path === "/v0/auth/me") {
+          return Response.json({
+            scope_type: "inbox",
+            scope_id: "speaker@agentmail.to",
+            inbox_id: "speaker@agentmail.to",
+          });
+        }
+        return new Response("Forbidden", { status: 403 });
+      },
+    });
+
+    await expect(client.verifyInbox()).resolves.toEqual({
+      inboxId: "speaker@agentmail.to",
+      email: "speaker@agentmail.to",
+    });
+    expect(paths).toEqual([
+      "/v0/inboxes/speaker%40agentmail.to",
+      "/v0/auth/me",
+    ]);
+  });
+
+  test("rejects a key scoped to a different inbox", async () => {
+    const client = new AgentMailClient({
+      apiKey: "am_wrong_scope",
+      inbox: "speaker@agentmail.to",
+      fetch: async (input) => new URL(input.toString()).pathname === "/v0/auth/me"
+        ? Response.json({
+            scope_type: "inbox",
+            scope_id: "other@agentmail.to",
+            inbox_id: "other@agentmail.to",
+          })
+        : new Response("Forbidden", { status: 403 }),
+    });
+
+    await expect(client.verifyInbox()).rejects.toThrow("scoped to a different inbox");
+  });
+
+  test("explains the read permission required by a broader key", async () => {
+    const client = new AgentMailClient({
+      apiKey: "am_organization_secret",
+      inbox: "speaker@agentmail.to",
+      fetch: async (input) => new URL(input.toString()).pathname === "/v0/auth/me"
+        ? Response.json({
+            scope_type: "organization",
+            scope_id: "organization_123",
+            organization_id: "organization_123",
+          })
+        : new Response("Forbidden", { status: 403 }),
+    });
+
+    await expect(client.verifyInbox()).rejects.toThrow(
+      "organization-scoped AgentMail API key needs inbox_read",
+    );
+  });
+
   test("sends one plain-text message with an idempotency key", async () => {
     const requests: Request[] = [];
     const client = new AgentMailClient({

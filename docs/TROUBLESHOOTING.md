@@ -142,8 +142,10 @@ confirm the marker instead of disabling the guard globally.
 The AgentMail lane is optional and requires both `AGENTMAIL_API_KEY` and
 `AGENTMAIL_INBOX`. Run `bun run agentmail:setup`; it hides the key, validates
 the exact selected inbox without enumerating the account, and preserves every
-other `.env` value. Prefer an inbox-scoped key with `inbox_read` and
-`message_send`, then restart the GPT Live host service.
+other `.env` value. Prefer an inbox-scoped key with `message_send`; broader keys
+also need `inbox_read` for exact-address validation. If setup reports a 403,
+the key is either missing that read permission or scoped to a different inbox.
+Then restart the GPT Live host service.
 
 An explicit request such as “Lara, send an email to person@example.com saying
 thank you” should show **Last routed request: AgentMail** on `/setup` while

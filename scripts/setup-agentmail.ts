@@ -29,6 +29,7 @@ if (options.disable) {
 
 console.log("\nOpenHome AgentMail setup\n");
 console.log("This selects one existing AgentMail inbox for autonomous voice email sends.");
+console.log("An inbox-scoped key needs message_send; broader keys also need inbox_read for validation.");
 console.log("The API key stays in the host's private .env file and is never sent to the DevKit.\n");
 
 const terminalInput = options.nonInteractive
@@ -150,7 +151,7 @@ Options:
 
 The API key is requested with hidden input. For non-interactive use, set
 AGENTMAIL_API_KEY in the environment; never put it in a command-line flag.
-The selected key should be inbox-scoped when possible and needs inbox_read plus
-message_send permissions.
+Prefer an inbox-scoped key with message_send. An organization- or pod-scoped key
+also needs inbox_read so setup can validate the selected address.
 `);
 }

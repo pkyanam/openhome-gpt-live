@@ -37,7 +37,8 @@ capture ChatGPT cookies.
   pairing handoff.
 - Optional AgentMail voice email: run `bun run agentmail:setup`. Supply the API
   key only through hidden input or `AGENTMAIL_API_KEY`, select one exact existing
-  inbox, and prefer an inbox-scoped key with `inbox_read` and `message_send`.
+  inbox, and prefer an inbox-scoped key with `message_send`. Broader keys also
+  need `inbox_read` for setup validation.
 
 ## Human-only handoffs
 

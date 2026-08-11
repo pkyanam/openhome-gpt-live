@@ -226,9 +226,11 @@ bun run agentmail:setup
 
 The setup asks for the key with hidden input and then for the exact AgentMail
 email address this speaker should send from. It validates that address directly
-with `GET /v0/inboxes/:inbox_id`, so setup never needs to list or load every
-inbox in a large account. For least privilege, use an inbox-scoped key with
-`inbox_read` and `message_send`. Non-interactive setup reads
+with `GET /v0/inboxes/:inbox_id`, or through the authenticated scope returned by
+`GET /v0/auth/me` for an inbox-scoped key, so setup never needs to list or load
+every inbox in a large account. For least privilege, use an inbox-scoped key
+with `message_send`. Organization- or pod-scoped keys also need `inbox_read` for
+exact-address validation. Non-interactive setup reads
 `AGENTMAIL_API_KEY` and `AGENTMAIL_INBOX` from the environment; the API key is
 intentionally not accepted as a command-line flag.
 

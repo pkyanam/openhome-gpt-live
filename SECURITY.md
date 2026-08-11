@@ -40,9 +40,10 @@ Use a trusted HTTPS endpoint, keep Bun bound to loopback, protect `.env` and
 rotating `LWC_SECRET` invalidates encrypted session state.
 
 Use least privilege for AgentMail: scope the key to the selected inbox when
-possible and grant only `inbox_read` plus `message_send`. The read permission is
-used by setup and diagnostics to verify that the configured address is the
-intended inbox. Never put the key in shell history or a command-line flag.
+possible and grant `message_send`. Setup and diagnostics validate that scope
+through AgentMail's authenticated identity endpoint. A broader organization- or
+pod-scoped key also needs `inbox_read` so the selected address can be verified.
+Never put the key in shell history or a command-line flag.
 
 For a locally managed Cloudflare Tunnel, protect `~/.cloudflared/cert.pem` as
 an account-wide management credential and the tunnel's UUID JSON file as its
