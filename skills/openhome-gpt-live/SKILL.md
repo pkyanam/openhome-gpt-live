@@ -1,6 +1,6 @@
 ---
 name: openhome-gpt-live
-description: Install, configure, update, develop, test, or diagnose the OpenHome GPT Live bridge and Local Ability on macOS or Linux. Use for OpenHome DevKit setup, persistent HTTPS or Cloudflare Tunnel configuration, Login with ChatGPT pairing, GPT Live voice/wake behavior, OpenAI search routing, Codex delegation, Ability packaging/sync, firmware 1.0.8 or 1.1.1 recovery, or speaker audio and service failures.
+description: Install, configure, update, develop, test, or diagnose the OpenHome GPT Live bridge and Local Ability on macOS or Linux. Use for OpenHome DevKit setup, persistent HTTPS or Cloudflare Tunnel configuration, Login with ChatGPT pairing, GPT Live voice/wake behavior, OpenAI search routing, optional AgentMail voice email, Codex delegation, Ability packaging/sync, firmware 1.0.8 or 1.1.1 recovery, or speaker audio and service failures.
 ---
 
 # OpenHome GPT Live
@@ -28,13 +28,16 @@ capture ChatGPT cookies.
   API keys or generated secrets in command-line flags.
 - Existing installation: rerun the same installer. It must preserve `.env`,
   `data/`, tunnel credentials, pairing/login state, and the cloud Ability id.
-- Treat Codex, OpenHome API automation, and managed Cloudflare Tunnel as
+- Treat Codex, OpenHome API automation, AgentMail, and managed Cloudflare Tunnel as
   optional capabilities. Explain what will be unavailable instead of blocking
   the base install.
 - Prefer a named, account-linked Cloudflare Tunnel or an existing stable HTTPS
   origin. Label a Quick Tunnel as temporary and never present it as production.
 - After host setup, run `bun run finish` for the short OpenHome dashboard and
   pairing handoff.
+- Optional AgentMail voice email: run `bun run agentmail:setup`. Supply the API
+  key only through hidden input or `AGENTMAIL_API_KEY`, select one exact existing
+  inbox, and prefer an inbox-scoped key with `inbox_read` and `message_send`.
 
 ## Human-only handoffs
 

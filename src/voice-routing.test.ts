@@ -38,6 +38,24 @@ describe("speaker voice routing", () => {
     expect(routeVoiceRequest("play Dreams by Fleetwood Mac")).toBe("codex");
   });
 
+  test("uses AgentMail only for explicit outbound sends when configured", () => {
+    expect(routeVoiceRequest(
+      "Lara, please send an email to adi@agentmail.cc about how much I love his product",
+      true,
+      true,
+    )).toBe("agentmail");
+    expect(routeVoiceRequest(
+      "Email adi at agentmail dot cc and politely thank him for AgentMail",
+      false,
+      true,
+    )).toBe("agentmail");
+    expect(routeVoiceRequest("Send an email to adi@agentmail.cc", false, false)).toBe("codex");
+    expect(routeVoiceRequest("Use Codex to send an email to adi@agentmail.cc", false, true)).toBe("codex");
+    expect(routeVoiceRequest("How do I send an email?", false, true)).toBe("native");
+    expect(routeVoiceRequest("Draft an email to adi@agentmail.cc", false, true)).toBe("native");
+    expect(routeVoiceRequest("Send an email in Gmail", false, true)).toBe("codex");
+  });
+
   test("keeps conversation and clock questions in GPT Live", () => {
     expect(routeVoiceRequest("explain photosynthesis in five sentences")).toBe("native");
     expect(routeVoiceRequest("what is the exact date and time right now")).toBe("native");

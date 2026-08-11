@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { readEnvFile } from "./env-file.ts";
+import { AgentMailClient } from "../src/agentmail-client.ts";
 
 type Level = "ok" | "warn" | "fail";
 const results: Array<{ level: Level; label: string; detail: string }> = [];
@@ -35,6 +36,40 @@ if (env.CODEX_WORKSPACE) {
   }
 } else {
   results.push({ level: "fail", label: "Codex workspace", detail: "CODEX_WORKSPACE is missing" });
+}
+
+const agentMailKey = env.AGENTMAIL_API_KEY?.trim();
+const agentMailInbox = env.AGENTMAIL_INBOX?.trim();
+if (!agentMailKey && !agentMailInbox) {
+  results.push({
+    level: "warn",
+    label: "AgentMail voice email",
+    detail: "not configured; run bun run agentmail:setup to enable it",
+  });
+} else if (!agentMailKey || !agentMailInbox) {
+  results.push({
+    level: "fail",
+    label: "AgentMail voice email",
+    detail: "AGENTMAIL_API_KEY and AGENTMAIL_INBOX must be configured together",
+  });
+} else if (offline) {
+  results.push({ level: "ok", label: "AgentMail voice email", detail: "configuration is present" });
+} else {
+  try {
+    const agentMail = new AgentMailClient({
+      apiKey: agentMailKey,
+      inbox: agentMailInbox,
+      baseUrl: env.AGENTMAIL_API_BASE,
+    });
+    await agentMail.verifyInbox();
+    results.push({ level: "ok", label: "AgentMail voice email", detail: "selected inbox is reachable" });
+  } catch (error) {
+    results.push({
+      level: "fail",
+      label: "AgentMail voice email",
+      detail: error instanceof Error ? error.message : "selected inbox validation failed",
+    });
+  }
 }
 
 const pythonAvailable = spawnSync("python3", ["--version"], { encoding: "utf8" }).status === 0;

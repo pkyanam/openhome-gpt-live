@@ -18,6 +18,7 @@ export {
   type RateLimitBucket,
   type ResponsesProxyPolicy,
   type ResponsesRateLimit,
+  type RealtimeAppServerAgentMailContext,
   type RealtimeAppServerConfirmationContext,
   type RealtimeAppServerPolicy,
   type RealtimeAppServerSearchContext,

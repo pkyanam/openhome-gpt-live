@@ -32,6 +32,8 @@ describe("setup CLI", () => {
         CODEX_WORKSPACE: workspace,
         CODEX_MAC_CONTROL: "disabled",
         OPENHOME_API_KEY: "",
+        AGENTMAIL_API_KEY: "",
+        AGENTMAIL_INBOX: "",
         LWC_SECRET: "",
         DEVKIT_BOOTSTRAP_TOKEN: "",
       };
@@ -63,6 +65,47 @@ describe("setup CLI", () => {
       ], { cwd: root, env: environment });
       expect(third.exitCode).toBe(0);
       expect(await readFile(envPath, "utf8")).toBe(firstSource);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves separately configured integrations", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openhome-gpt-setup-integrations-"));
+    const envPath = join(directory, ".env");
+    const workspace = join(directory, "workspace");
+    try {
+      await Bun.write(envPath, [
+        'AGENTMAIL_API_KEY="am_existing"',
+        'AGENTMAIL_INBOX="speaker@agentmail.to"',
+        'OPENHOME_SPOTIFY_TOOL_TOKEN="spotify_existing"',
+        "",
+      ].join("\n"));
+      const result = Bun.spawnSync([
+        process.execPath,
+        "scripts/setup.ts",
+        "--non-interactive",
+        "--tunnel",
+        "later",
+      ], {
+        cwd: root,
+        env: {
+          ...process.env,
+          OPENHOME_GPT_ENV_FILE: envPath,
+          APP_ALLOWED_CHATGPT_EMAIL: "",
+          PUBLIC_BASE_URL: "",
+          CODEX_WORKSPACE: workspace,
+          CODEX_MAC_CONTROL: "disabled",
+          OPENHOME_API_KEY: "",
+          LWC_SECRET: "a".repeat(64),
+          DEVKIT_BOOTSTRAP_TOKEN: "b".repeat(64),
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      const values = await readEnvFile(envPath);
+      expect(values.AGENTMAIL_API_KEY).toBe("am_existing");
+      expect(values.AGENTMAIL_INBOX).toBe("speaker@agentmail.to");
+      expect(values.OPENHOME_SPOTIFY_TOOL_TOKEN).toBe("spotify_existing");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

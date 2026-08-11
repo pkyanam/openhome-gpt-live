@@ -9,9 +9,11 @@ Run `./install.sh`. The wizard detects reusable configuration and offers:
 3. a temporary Quick Tunnel for evaluation;
 4. host-only setup to finish later.
 
-Codex, an OpenHome API key, automatic Ability upload, and tunnel management are
-optional. ChatGPT identity and a reachable HTTPS origin are required only before
-the production bridge can start.
+Codex, an OpenHome API key, AgentMail, automatic Ability upload, and tunnel
+management are optional. Configure voice email separately with `bun run
+agentmail:setup`; its API key must use hidden input or the environment. ChatGPT
+identity and a reachable HTTPS origin are required only before the production
+bridge can start.
 
 ## Agent or automation
 

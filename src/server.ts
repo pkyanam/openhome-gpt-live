@@ -17,6 +17,9 @@ import { routeVoiceRequest } from "./voice-routing.ts";
 import { PairingCodeStore, type PairingCodeRecord } from "./pairing-code-store.ts";
 import { OpenHomeSpotifyClient } from "./openhome-spotify-client.ts";
 import { LocalWhisperTranscriber } from "./local-transcriber.ts";
+import { AgentMailClient } from "./agentmail-client.ts";
+import { composeAgentMailMessage } from "./agentmail-composer.ts";
+import { executeAgentMailVoiceRequest } from "./agentmail-voice.ts";
 
 const LIVE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const host = process.env.HOST?.trim() || "127.0.0.1";
@@ -53,6 +56,11 @@ const codexControl = createCodexControlPolicy({
 const spotify = new OpenHomeSpotifyClient({
   baseUrl: process.env.OPENHOME_SPOTIFY_URL,
   token: process.env.OPENHOME_SPOTIFY_TOOL_TOKEN,
+});
+const agentMail = new AgentMailClient({
+  apiKey: process.env.AGENTMAIL_API_KEY,
+  inbox: process.env.AGENTMAIL_INBOX,
+  baseUrl: process.env.AGENTMAIL_API_BASE,
 });
 const voiceCommandTranscriber = new LocalWhisperTranscriber({
   enabled: process.env.OPENHOME_LOCAL_VOICE_COMMANDS?.trim().toLowerCase() !== "false",
@@ -133,8 +141,15 @@ auth = createChatGPTHandler({
               : {}),
           }
         : {}),
+      ...(agentMail.configured
+        ? {
+            agentMailAcknowledgement: "I’m drafting and sending that email now.",
+            executeAgentMail: ({ request, transcript }: { request: Request; transcript: string }) =>
+              executeSubscriptionEmail(request, transcript),
+          }
+        : {}),
       routeHandoff: (transcript) => {
-        const destination = routeVoiceRequest(transcript, spotify.configured);
+        const destination = routeVoiceRequest(transcript, spotify.configured, agentMail.configured);
         console.log(`GPT Live routed a request to ${destination}.`);
         return destination;
       },
@@ -144,8 +159,12 @@ auth = createChatGPTHandler({
         "Native GPT Live owns ordinary conversation, memory, and general knowledge. The OpenHome bridge intercepts " +
         "web-search handoffs and runs them through OpenAI, so Codex should receive only local computer, workspace, " +
         "and OpenHome action requests. Routine Spotify playback is owned by the separate deterministic Ability and " +
-        "must never reach Codex when that Ability is configured. Process only the current delegated request and do not " +
-        "replay, reorder, or answer earlier conversation turns. Complete delegated tasks directly rather than " +
+        "must never reach Codex when that Ability is configured. " +
+        (agentMail.configured
+          ? "Outbound email sends are owned by the host AgentMail lane and must never reach Codex. "
+          : "") +
+        "Process only the current delegated request and do not replay, reorder, or answer earlier conversation turns. " +
+        "Complete delegated tasks directly rather than " +
         "merely describing how the user could do them. " +
         "Each delegated request runs in its own isolated Codex thread. Other requests may run concurrently. " +
         "Complete only this thread's request and never replay, merge, wait for, or report on another task. " +
@@ -184,6 +203,13 @@ auth = createChatGPTHandler({
             "play, search, pause, resume, queue, skip, seek, volume, device, and now-playing requests to the speaker's " +
             "Spotify Ability without Codex. Never open or launch a Spotify app unless the user explicitly names the Mac, " +
             "computer, or browser. "
+          : "") +
+        (agentMail.configured
+          ? "Immediately hand off explicit outbound email-send requests using the user's exact words. The host AgentMail " +
+            "lane will extract one recipient, generate a polite subject and plain-text body through authenticated OpenAI, " +
+            "and send exactly one idempotent message from the configured speaker inbox without Codex or Mac control. " +
+            "If the user has not provided an unambiguous recipient, ask for the email address before handing off. " +
+            "Do not hand off requests that only ask to draft, explain, read, search, reply to, or manage email. "
           : "") +
         (fullCodexAccess
           ? "Mac control is owner-authorized for direct delegated execution without browser confirmation. "
@@ -233,6 +259,7 @@ console.log(`Codex workspace: ${codexWorkspace}`);
 console.log(`Codex access mode: ${fullCodexAccess ? "full" : confirmedMacControl ? "confirmed" : "workspace"}`);
 console.log(`Persistent state directory: ${dataDirectory}`);
 console.log(`Local Spotify voice fast lane: ${voiceCommandTranscriber.configured ? "ready" : "disabled"}`);
+console.log(`AgentMail voice email: ${agentMail.configured ? "ready" : "disabled"}`);
 if (!process.env.OPENHOME_API_KEY) {
   console.warn("OPENHOME_API_KEY is not set; voice works, but OpenHome tools will return a configuration error.");
 }
@@ -347,5 +374,53 @@ async function executeSubscriptionSearch(request: Request, transcript: string): 
       `OpenAI hosted web search failed after ${Date.now() - startedAt} ms: ${error instanceof Error ? error.message : String(error)}`,
     );
     throw error;
+  }
+}
+
+async function executeSubscriptionEmail(request: Request, transcript: string): Promise<string> {
+  await requireAuthorizedToolUser(request);
+  const configured = process.env.LWC_AGENTMAIL_MODEL?.trim()
+    || process.env.LWC_SEARCH_MODEL?.trim()
+    || process.env.LWC_DEFAULT_MODEL?.trim()
+    || "gpt-5.5";
+  const startedAt = Date.now();
+  const result = await executeAgentMailVoiceRequest({
+    transcript,
+    client: agentMail,
+    compose: (currentTranscript) => composeAgentMailMessage(
+      currentTranscript,
+      configured,
+      (payload) => executeAuthenticatedResponsesJson(request, payload),
+    ),
+  });
+  console.log(`AgentMail voice request completed in ${Date.now() - startedAt} ms.`);
+  return result;
+}
+
+async function executeAuthenticatedResponsesJson(
+  request: Request,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
+  const target = new URL(`${auth.basePath}/responses`, request.url);
+  const headers = new Headers({
+    "content-type": "application/json",
+    accept: "application/json",
+    "x-login-with-chatgpt-service-tier": "fast",
+    "x-login-with-chatgpt-reasoning-effort": "low",
+  });
+  const cookie = request.headers.get("cookie");
+  if (cookie) headers.set("cookie", cookie);
+  const response = await auth.handler(new Request(target, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  }));
+  if (!response.ok) {
+    throw new Error(`OpenAI email drafting failed (HTTP ${response.status}).`);
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new Error("OpenAI returned an invalid email drafting response.");
   }
 }

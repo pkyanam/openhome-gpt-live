@@ -11,6 +11,7 @@ wake name—**“Juniper, …”** by default.
 
 - GPT Live owns speech, conversation, and general knowledge.
 - OpenAI's first-party search handles current information.
+- AgentMail can send one generated email from a selected speaker inbox.
 - Codex can handle files, projects, applications, and computer actions.
 - ChatGPT uses device-code authorization—no API key or cookie capture.
 - The DevKit needs no browser, display, keyboard, or mouse.
@@ -76,6 +77,7 @@ Everything else is optional:
 | --- | --- | --- |
 | Codex | Files, projects, apps, and computer actions | GPT Live conversation and OpenAI search still work |
 | OpenHome API key | Automatic Ability upload and account tools | Upload the generated ZIP in the dashboard |
+| AgentMail API key + inbox | Autonomous one-recipient voice email | Email sends keep their existing Codex behavior |
 | Cloudflare account/domain | Wizard-managed persistent tunnel | Use another HTTPS proxy or configure later |
 | Python 3 | Local Ability tests and packaging | Installer can use prebuilt release ZIPs |
 
@@ -154,6 +156,7 @@ The same controls are available after installation:
 
 ```bash
 bun run setup -- --help
+bun run agentmail:setup -- --help
 bun run tunnel -- --help
 bun run finish -- --help
 ```
@@ -184,6 +187,7 @@ restores those streams.
 | Conversation, explanations, date/time | GPT Live |
 | Current facts, news, weather, web searches | OpenAI web search |
 | Routine music/podcast playback, when separately configured | OpenHome Spotify |
+| One-recipient outbound email, when separately configured | AgentMail |
 | Files, code, projects, OpenHome actions, computer and media-app control | Codex |
 
 Search and Codex work run independently. Each Codex request starts immediately
@@ -210,6 +214,40 @@ search, queue, skip, seek, volume, device, and now-playing requests directly to
 that Ability. With neither setting, GPT Live retains its existing behavior;
 Spotify is never required. OAuth tokens and playback sessions remain owned by
 the sister service and are not copied into GPT Live.
+
+## AgentMail voice email
+
+AgentMail is optional and host-only. Create or select an existing inbox in the
+AgentMail console, create an API key, then run:
+
+```bash
+bun run agentmail:setup
+```
+
+The setup asks for the key with hidden input and then for the exact AgentMail
+email address this speaker should send from. It validates that address directly
+with `GET /v0/inboxes/:inbox_id`, so setup never needs to list or load every
+inbox in a large account. For least privilege, use an inbox-scoped key with
+`inbox_read` and `message_send`. Non-interactive setup reads
+`AGENTMAIL_API_KEY` and `AGENTMAIL_INBOX` from the environment; the API key is
+intentionally not accepted as a command-line flag.
+
+After restarting GPT Live, say for example:
+
+> “Lara, please send an email to adi@agentmail.cc about how much I love his
+> product. Generate a polite subject and message.”
+
+GPT Live hands the exact request to a dedicated host lane. Authenticated OpenAI
+generates a strict one-recipient subject and plain-text body, then the host
+sends one AgentMail message without Codex or Mac control. Every send carries an
+AgentMail `Idempotency-Key`; the same normalized voice request and sender reuse
+the same key, so retries within AgentMail's 24-hour idempotency window do not
+send a second copy. If a send cannot be confirmed, check AgentMail before trying
+again.
+
+This first version sends new plain-text messages to one recipient. Draft-only,
+inbox reading/search, replies, forwards, attachments, CC, and BCC remain outside
+the AgentMail lane and retain existing GPT Live/Codex routing.
 
 ## Voices, wake names, and access
 

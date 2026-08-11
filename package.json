@@ -16,6 +16,7 @@
     "check": "bun run typecheck && bun test && bun run test:ability && bun run verify:release && bun run package:ability && bun run verify:shell && bun run verify:site",
     "package:ability": "bash scripts/package-ability.sh",
     "setup": "bun scripts/setup.ts",
+    "agentmail:setup": "bun scripts/setup-agentmail.ts",
     "finish": "bun scripts/finish-setup.ts",
     "tunnel": "bun scripts/tunnel.ts",
     "doctor": "bun scripts/doctor.ts",

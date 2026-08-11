@@ -170,6 +170,7 @@ describe("createChatGPTHandler", () => {
     let sessionOptions: any;
     let startOptions: any;
     let executeContext: any;
+    let agentMailContext: any;
     let confirmationContext: any;
     let closed = false;
     let clockRefreshes = 0;
@@ -229,6 +230,10 @@ describe("createChatGPTHandler", () => {
           confirmTool: async (context) => {
             confirmationContext = context;
             return { output: { status: "confirmed" }, speech: "Confirmed." };
+          },
+          executeAgentMail: async (context) => {
+            agentMailContext = context;
+            return "Email sent.";
           },
           sessionFactory: (options) => {
             sessionOptions = options;
@@ -312,6 +317,17 @@ describe("createChatGPTHandler", () => {
     });
     expect(executeContext.loginSessionId).toBeString();
     expect(executeContext.request.headers.get("cookie")).toBe(cookie);
+
+    await expect(sessionOptions.executeAgentMail(
+      "Send an email to person@example.com.",
+      "email_request_1",
+    )).resolves.toBe("Email sent.");
+    expect(agentMailContext).toMatchObject({
+      transcript: "Send an email to person@example.com.",
+      requestId: "email_request_1",
+      liveSessionId: "live_session_123",
+    });
+    expect(agentMailContext.request.headers.get("cookie")).toBe(cookie);
 
     // Events emitted before the browser subscribes must be queued, not lost.
     for (const listener of listeners) {
