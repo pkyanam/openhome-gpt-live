@@ -34,12 +34,12 @@
     "@opencoredev/loginwithchatgpt-core": "workspace:*",
     "@opencoredev/loginwithchatgpt-react": "workspace:*",
     "@opencoredev/loginwithchatgpt-server": "workspace:*",
-    "react": "^19.2.0",
+    "react": "^19.3.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19.2.0",
+    "@types/react": "^19.3.0",
     "@types/react-dom": "^19.2.0",
     "typescript": "^5.9.0"
   }
